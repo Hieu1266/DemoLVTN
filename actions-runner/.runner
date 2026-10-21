@@ -1,0 +1,11 @@
+﻿{
+  "agentId": 2,
+  "agentName": "HIEU",
+  "poolId": 1,
+  "poolName": "Default",
+  "serverUrl": "https://pipelinesghubeus25.actions.githubusercontent.com/9jEw63q5yIFN1kahdYncwJqvPb0AmimaRwQ3ckKvxsFArtwZYi/",
+  "gitHubUrl": "https://github.com/Hieu1266/DemoLVTN",
+  "workFolder": "_work",
+  "useV2Flow": true,
+  "serverUrlV2": "https://broker.actions.githubusercontent.com/"
+}

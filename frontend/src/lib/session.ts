@@ -29,8 +29,12 @@ export function clearSession() {
   window.dispatchEvent(new Event("session-change"));
 }
 
-export const homeByRole = (role: Role) =>
-  role === "STUDENT" ? "/dashboard_student" : "/dashboard_instructor";
+
+export const homeByRole = (role: Role) => {
+  if (role === "STUDENT") return "/dashboard_student";
+  if (role === "INSTRUCTOR") return "/dashboard_instructor";
+  return "/admin/dashboard";
+};
 
 function subscribe(cb: () => void) {
   window.addEventListener("session-change", cb);

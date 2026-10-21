@@ -15,10 +15,10 @@ interface TokenResponse {
 }
 
 export const register = (data: RegisterData) =>
-  api<SessionUser>(AUTH_URL, "/auth/register", { method: "POST", body: JSON.stringify(data) });
+  api<SessionUser>(AUTH_URL, "/users/register", { method: "POST", body: JSON.stringify(data) });
 
 export async function login(email: string, password: string) {
-  const res = await api<TokenResponse>(AUTH_URL, "/auth/login", {
+  const res = await api<TokenResponse>(AUTH_URL, "/users/login", {
     method: "POST",
     body: JSON.stringify({ email, password }),
   });

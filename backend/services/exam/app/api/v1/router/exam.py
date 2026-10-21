@@ -118,22 +118,47 @@ def update_exam_by_id(
     db.refresh(exam)
     return exam
 
+from uuid import UUID
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlmodel import Session, select
+
+# ⚠️ LƯU Ý: Đảm bảo import đúng đường dẫn tới model Attempt và Exam của bạn
+from app.models.exam import Exam
+from app.models.attempt import Attempt  # Chỉnh lại đường dẫn nếu file attempt.py nằm chỗ khác
 
 @router.delete("/{exam_id}")
-def delete_exam_by_id(
-    exam_id: UUID,
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
-):
-    """Xóa đề thi."""
-    exam = crud_exam.get_by_id(db, exam_id)
+def delete_exam_by_id(exam_id: UUID, db: Session = Depends(get_db)):
+    # 1. Tìm đề thi trong CSDL
+    exam = db.get(Exam, exam_id)
     if not exam:
-        raise HTTPException(status_code=404, detail="Không tìm thấy đề thi!")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, 
+            detail="Không tìm thấy đề thi."
+        )
 
+    # 2. KIỂM TRA TRƯỚC: Nếu đề thi đã PUBLISHED hoặc CLOSED -> Chặn ngay
+    if hasattr(exam, "status") and exam.status in ["PUBLISHED", "CLOSED"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Đề thi đã được triển khai hoặc đã đóng. Vui lòng không xóa!"
+        )
+
+    # 3. KIỂM TRA TRƯỚC: Xem đã có sinh viên tạo bài làm (Attempt) nào chưa
+    has_attempt = db.exec(
+        select(Attempt).where(Attempt.exam_id == exam_id)
+    ).first()
+
+    if has_attempt:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Đề thi đã có sinh viên làm bài, không thể xóa để bảo toàn dữ liệu!"
+        )
+
+    # 4. CHỈ XÓA KHI ĐÃ QUA ĐƯỢC TẤT CẢ CÁC BƯỚC KIỂM TRA TRÊN
     db.delete(exam)
     db.commit()
-    return {"status": "success", "message": "Đã xóa đề thi thành công!"}
 
+    return {"message": "Xóa đề thi thành công."}
 
 # ===================================================================
 # 2. DANH SÁCH BÀI NỘP CỦA SINH VIÊN (SUBMISSIONS LIST)

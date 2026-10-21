@@ -6,24 +6,45 @@ import { logout } from "@/src/actions/auth";
 import { homeByRole, useSession } from "@/src/lib/session";
 import { btn, btnGhost } from "@/src/lib/ui";
 
+// Menu dành cho ADMIN (Đã đưa các tab quản trị lên đây)
+const adminLinks = [
+  { href: "/admin/dashboard", label: "Cấp Giảng Viên", exact: true },
+  { href: "/admin/users", label: "Quản Lý Người Dùng" },
+  { href: "/admin/configmap", label: "Cấu Hình ConfigMap" },
+];
+
+// Menu dành cho GIẢNG VIÊN
 const instructorLinks = [
   { href: "/dashboard_instructor", label: "Quản lý đề thi", exact: true },
   { href: "/dashboard_instructor/exams/new", label: "Tạo đề" },
   { href: "/dashboard_instructor/question-bank", label: "Ngân hàng câu hỏi" },
 ];
 
+// Menu dành cho SINH VIÊN
 const studentLinks = [
   { href: "/dashboard_student", label: "Vào thi", exact: true },
   { href: "/dashboard_student/results", label: "Kết quả" },
 ];
 
-const roleLabel = { STUDENT: "Sinh viên", INSTRUCTOR: "Giảng viên", ADMIN: "Quản trị" };
+const roleLabel: Record<string, string> = { 
+  STUDENT: "Sinh viên", 
+  INSTRUCTOR: "Giảng viên", 
+  ADMIN: "Quản trị" 
+};
 
 export default function Navbar() {
   const { user } = useSession();
   const router = useRouter();
   const pathname = usePathname();
-  const links = !user ? [] : user.role === "STUDENT" ? studentLinks : instructorLinks;
+
+  // Tự động phân luồng menu theo user.role
+  const links = !user 
+    ? [] 
+    : user.role === "ADMIN" 
+    ? adminLinks 
+    : user.role === "STUDENT" 
+    ? studentLinks 
+    : instructorLinks;
 
   const isLinkActive = (href: string, exact?: boolean) => {
     if (exact) return pathname === href;
@@ -34,6 +55,7 @@ export default function Navbar() {
     <header className="sticky top-0 z-40 border-b border-gray-200/80 bg-white/70 backdrop-blur-lg dark:border-white/10 dark:bg-neutral-950/70">
       <nav className="mx-auto flex h-[72px] max-w-7xl items-center justify-between px-6 sm:px-8">
         <div className="flex items-center gap-10">
+          {/* LOGO */}
           <Link href={user ? homeByRole(user.role) : "/"} className="flex items-center gap-2.5">
             <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-600 to-fuchsia-600 text-xl font-bold text-white shadow-md shadow-indigo-600/30">
               L
@@ -41,6 +63,7 @@ export default function Navbar() {
             <span className="text-xl font-bold tracking-tight">LUMER</span>
           </Link>
 
+          {/* DYNAMIC NAV LINKS */}
           <div className="flex items-center gap-2">
             {links.map((l) => (
               <Link
@@ -58,6 +81,7 @@ export default function Navbar() {
           </div>
         </div>
 
+        {/* USER INFO & ACTIONS */}
         <div className="flex items-center gap-4">
           {user ? (
             <>
@@ -67,7 +91,7 @@ export default function Navbar() {
                 </span>
                 <div className="hidden leading-tight sm:block">
                   <p className="text-sm font-medium">{user.username}</p>
-                  <p className="text-xs opacity-60">{roleLabel[user.role]}</p>
+                  <p className="text-xs opacity-60">{roleLabel[user.role] || user.role}</p>
                 </div>
               </div>
               <button

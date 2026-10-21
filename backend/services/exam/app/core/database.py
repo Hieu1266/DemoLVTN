@@ -11,9 +11,9 @@ from app.models.attempt_answer import AttemptAnswer
 
 engine = create_engine(
     settings.EXAM_DB_URL,
-    pool_size=3,
-    max_overflow=5,
-    pool_timeout=30,
+    pool_size=50,
+    max_overflow=100    ,
+    pool_timeout=60,
     pool_recycle=1800,
     pool_pre_ping=True,
 )

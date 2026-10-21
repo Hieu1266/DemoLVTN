@@ -1,0 +1,124 @@
+# ==========================================
+# 1. USER-SERVICE (AUTH)
+# ==========================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-service
+  labels:
+    app: auth-service
+spec:
+  # Số pod do HPA (auto-scaling.yml) quản lý
+  selector:
+    matchLabels:
+      app: auth-service
+  template:
+    metadata:
+      labels:
+        app: auth-service
+    spec:
+      containers:
+      - name: auth-service
+        image: DOCKER_USER/auth_service:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8000
+        env:
+        - name: BACKEND_USER_URL
+          value: "http://auth-service:8000"
+        - name: BACKEND_EXAM_URL
+          value: "http://exam-service:8001"
+        envFrom:
+        - secretRef:
+            name: backend-secrets
+        - configMapRef:
+            name: auth-service-config
+            optional: true
+        readinessProbe:
+          tcpSocket:
+            port: 8000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "1000m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth-service
+spec:
+  type: NodePort
+  ports:
+  - port: 8000
+    targetPort: 8000
+    nodePort: 30000
+  selector:
+    app: auth-service
+
+---
+# ==========================================
+# 2. EXAM-SERVICE
+# ==========================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: exam-service
+  labels:
+    app: exam-service
+spec:
+  # Số pod do HPA (auto-scaling.yml) quản lý
+  selector:
+    matchLabels:
+      app: exam-service
+  template:
+    metadata:
+      labels:
+        app: exam-service
+    spec:
+      containers:
+      - name: exam-service
+        image: DOCKER_USER/exam-service:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8001
+        env:
+        - name: BACKEND_USER_URL
+          value: "http://auth-service:8000"
+        - name: BACKEND_COURSE_URL
+          value: "http://exam-service:8001"
+        envFrom:
+        - secretRef:
+            name: backend-secrets
+        - configMapRef:
+            name: exam-service-config
+            optional: true
+        readinessProbe:
+          tcpSocket:
+            port: 8001
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "1000m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: exam-service
+spec:
+  type: NodePort
+  ports:
+  - port: 8001
+    targetPort: 8001
+    nodePort: 30001
+  selector:
+    app: exam-service
