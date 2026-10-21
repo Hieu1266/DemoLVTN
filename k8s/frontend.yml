@@ -21,7 +21,7 @@ spec:
     spec:
       containers:
       - name: frontend
-        image: DOCKER_USER/frontend:latest
+        image: DOCKER_USER/ssl-frontend:latest
         imagePullPolicy: Always
         ports:
         - containerPort: 3000
@@ -68,6 +68,6 @@ spec:
   ports:
   - port: 3000
     targetPort: 3000
-    nodePort: 30080
+    nodePort: 31080
   selector:
     app: frontend

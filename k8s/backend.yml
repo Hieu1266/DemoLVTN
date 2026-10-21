@@ -19,7 +19,7 @@ spec:
     spec:
       containers:
       - name: auth-service
-        image: DOCKER_USER/auth_service:latest
+        image: DOCKER_USER/ssl-auth-service:latest
         imagePullPolicy: Always
         ports:
         - containerPort: 8000
@@ -56,7 +56,7 @@ spec:
   ports:
   - port: 8000
     targetPort: 8000
-    nodePort: 30000
+    nodePort: 31000
   selector:
     app: auth-service
 
@@ -82,7 +82,7 @@ spec:
     spec:
       containers:
       - name: exam-service
-        image: DOCKER_USER/exam-service:latest
+        image: DOCKER_USER/ssl-exam-service:latest
         imagePullPolicy: Always
         ports:
         - containerPort: 8001
@@ -119,6 +119,6 @@ spec:
   ports:
   - port: 8001
     targetPort: 8001
-    nodePort: 30001
+    nodePort: 31001
   selector:
     app: exam-service

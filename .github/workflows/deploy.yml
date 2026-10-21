@@ -26,9 +26,9 @@ jobs:
       matrix:
         include:
           - service: auth
-            image: auth_service
+            image: ssl-auth-service
           - service: exam
-            image: exam-service
+            image: ssl-exam-service
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -76,7 +76,7 @@ jobs:
           context: ./frontend
           file: ./frontend/Dockerfile
           push: true
-          tags: ${{ env.DOCKER_USERNAME }}/frontend:latest
+          tags: ${{ env.DOCKER_USERNAME }}/ssl-frontend:latest
           cache-from: type=gha,scope=frontend
           cache-to: type=gha,mode=max,scope=frontend
           # Trình duyệt gọi thẳng auth-service (NodePort 30000) và exam-service (NodePort 30001)
@@ -106,6 +106,14 @@ jobs:
           Write-Host "Khong ket noi duoc Kubernetes. Hay kiem tra Docker Desktop da bat Kubernetes chua."
           exit 1
 
+      # Project này chạy trong namespace riêng "ssl" để không đụng project LUMER trong namespace default.
+      # Mọi lệnh kubectl bên dưới đều phải có -n ssl.
+      - name: Create namespace
+        shell: powershell
+        run: |
+          kubectl create namespace ssl --dry-run=client -o yaml | kubectl apply -f -
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       # Secret dùng chung cho Postgres, auth-service và exam-service
       # (không đặt ALGORITHM: để rỗng sẽ ghi đè giá trị mặc định HS256 và làm hỏng JWT)
       - name: Create backend secret
@@ -120,7 +128,7 @@ jobs:
           EXAM_DB_URL: ${{ secrets.EXAM_DB_URL }}
           FRONTEND_HOST: ${{ secrets.NEXT_PUBLIC_FRONTEND }}
         run: |
-          kubectl create secret generic backend-secrets `
+          kubectl create secret generic backend-secrets -n ssl `
             --from-literal=SECRET_KEY="$env:SECRET_KEY" `
             --from-literal=CLIENT_ID="$env:CLIENT_ID" `
             --from-literal=CLIENT_SECRET_KEY="$env:CLIENT_SECRET_KEY" `
@@ -130,7 +138,7 @@ jobs:
             --from-literal=EXAM_DB_URL="$env:EXAM_DB_URL" `
             --from-literal=FRONTEND_HOST="$env:FRONTEND_HOST" `
             --from-literal=BACKEND_CORS_ORIGINS="$env:FRONTEND_HOST" `
-            --dry-run=client -o yaml | kubectl apply -f -
+            --dry-run=client -o yaml | kubectl apply -n ssl -f -
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       # Postgres phải sẵn sàng và có đủ database trước khi chạy các service
@@ -139,18 +147,18 @@ jobs:
         env:
           DB_USER: ${{ secrets.DB_USER }}
         run: |
-          kubectl apply -f k8s/postgres.yml
+          kubectl apply -n ssl -f k8s/postgres.yml
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-          kubectl rollout status statefulset/postgres --timeout=180s
+          kubectl rollout status -n ssl statefulset/postgres --timeout=180s
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
           # Script init của Postgres chỉ chạy khi volume còn trống, nên tạo DB còn thiếu ở đây
           foreach ($db in @('users_ssl_db', 'exams_ssl_db')) {
-            $exists = kubectl exec postgres-0 -- psql -U $env:DB_USER -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='$db'"
+            $exists = kubectl exec -n ssl postgres-0 -- psql -U $env:DB_USER -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='$db'"
             if ("$exists".Trim() -ne '1') {
               Write-Host "Create database $db"
-              kubectl exec postgres-0 -- psql -U $env:DB_USER -d postgres -c "CREATE DATABASE $db"
+              kubectl exec -n ssl postgres-0 -- psql -U $env:DB_USER -d postgres -c "CREATE DATABASE $db"
               if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             }
           }
@@ -162,17 +170,17 @@ jobs:
         run: |
           foreach ($f in @('backend', 'frontend', 'auto-scaling')) {
             Write-Host "Apply k8s/$f.yml"
-            (Get-Content "k8s/$f.yml" -Raw) -replace 'DOCKER_USER', $env:DOCKER_USERNAME | kubectl apply -f -
+            (Get-Content "k8s/$f.yml" -Raw) -replace 'DOCKER_USER', $env:DOCKER_USERNAME | kubectl apply -n ssl -f -
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
 
           # Image dùng tag :latest nên phải restart để pod kéo image mới
           foreach ($d in @('auth-service', 'exam-service', 'frontend')) {
-            kubectl rollout restart deployment/$d
+            kubectl rollout restart -n ssl deployment/$d
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
 
           foreach ($d in @('auth-service', 'exam-service', 'frontend')) {
-            kubectl rollout status deployment/$d --timeout=240s
+            kubectl rollout status -n ssl deployment/$d --timeout=240s
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
