@@ -1,59 +1,40 @@
 # ==========================================
-# Stage 1: Builder (Cài đặt thư viện với uv)
+# Next.js frontend (multi-stage)
 # ==========================================
-FROM python:3.11-slim AS builder
-
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
-
-# Lấy công cụ 'uv' để cài thư viện siêu tốc
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
-
+FROM node:22-alpine AS deps
 WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci
 
-# Cài đặt thư viện build hệ thống (C++, PostgreSQL driver)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    libpq-dev \
-    && rm -rf /var/lib/apt/lists/*
-
-# Copy file requirements.txt
-COPY requirements.txt .
-
-# Tạo môi trường ảo và cài đặt thư viện bằng uv
-RUN uv venv /app/.venv && \
-    . /app/.venv/bin/activate && \
-    uv pip install --no-cache -r requirements.txt
-
-# ==========================================
-# Stage 2: Runner (Môi trường chạy nhẹ & bảo mật)
-# ==========================================
-FROM python:3.11-slim AS runner
-
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PATH="/app/.venv/bin:$PATH"
-
+FROM node:22-alpine AS builder
 WORKDIR /app
+ENV NEXT_TELEMETRY_DISABLED=1
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
 
-# Thư viện runtime cần thiết
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libpq5 \
-    ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+# NEXT_PUBLIC_* được nhúng vào bundle lúc build => truyền bằng --build-arg
+ARG NEXT_PUBLIC_AUTH_API_URL
+ARG NEXT_PUBLIC_EXAM_API_URL
+ENV NEXT_PUBLIC_AUTH_API_URL=$NEXT_PUBLIC_AUTH_API_URL \
+    NEXT_PUBLIC_EXAM_API_URL=$NEXT_PUBLIC_EXAM_API_URL
 
-# Tạo user không phải root
-RUN groupadd --system appgroup && useradd --system --gid appgroup appuser
+RUN npm run build
 
-# Copy môi trường ảo .venv từ builder
-COPY --from=builder --chown=appuser:appgroup /app/.venv /app/.venv
+FROM node:22-alpine AS runner
+WORKDIR /app
+ENV NODE_ENV=production \
+    NEXT_TELEMETRY_DISABLED=1 \
+    PORT=3000
 
-# Copy thư mục app chứa code FastAPI (main.py nằm trong app/)
-COPY --chown=appuser:appgroup ./app ./app
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+
+COPY --from=builder --chown=appuser:appgroup /app/package.json ./
+COPY --from=builder --chown=appuser:appgroup /app/next.config.ts ./
+COPY --from=builder --chown=appuser:appgroup /app/public ./public
+COPY --from=builder --chown=appuser:appgroup /app/.next ./.next
+# Giữ nguyên node_modules (không prune) vì next.config.ts cần typescript lúc start
+COPY --from=builder --chown=appuser:appgroup /app/node_modules ./node_modules
 
 USER appuser
-
 EXPOSE 3000
-
-# Chạy ứng dụng FastAPI (Vì main.py nằm trong thư mục app/ nên module là app.main:app)
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "3000"]
+CMD ["npx", "next", "start", "-H", "0.0.0.0", "-p", "3000"]
