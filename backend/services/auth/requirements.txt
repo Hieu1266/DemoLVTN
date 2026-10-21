@@ -6,3 +6,4 @@ pydantic[email]
 bcrypt
 pyjwt
 python-dotenv
+pydantic-settings
