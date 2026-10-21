@@ -106,6 +106,26 @@ jobs:
           Write-Host "Khong ket noi duoc Kubernetes. Hay kiem tra Docker Desktop da bat Kubernetes chua."
           exit 1
 
+      # Báo sớm nếu thiếu secret (secret rỗng vẫn "tạo được" nhưng làm Postgres/JWT hỏng âm thầm)
+      - name: Check required secrets
+        shell: powershell
+        env:
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
+          CLIENT_ID: ${{ secrets.CLIENT_ID }}
+          CLIENT_SECRET_KEY: ${{ secrets.CLIENT_SECRET_KEY }}
+          DB_USER: ${{ secrets.DB_USER }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          FRONTEND_HOST: ${{ secrets.NEXT_PUBLIC_FRONTEND }}
+        run: |
+          $missing = @()
+          foreach ($n in @('SECRET_KEY', 'CLIENT_ID', 'CLIENT_SECRET_KEY', 'DB_USER', 'DB_PASSWORD', 'FRONTEND_HOST')) {
+            if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($n))) { $missing += $n }
+          }
+          if ($missing.Count -gt 0) {
+            Write-Host "Thieu secret (FRONTEND_HOST lay tu NEXT_PUBLIC_FRONTEND): $($missing -join ', ')"
+            exit 1
+          }
+
       # Project này chạy trong namespace riêng "ssl" để không đụng project LUMER trong namespace default.
       # Mọi lệnh kubectl bên dưới đều phải có -n ssl.
       - name: Create namespace
@@ -124,18 +144,24 @@ jobs:
           CLIENT_SECRET_KEY: ${{ secrets.CLIENT_SECRET_KEY }}
           DB_USER: ${{ secrets.DB_USER }}
           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
-          USERS_DB_URL: ${{ secrets.USERS_DB_URL }}
-          EXAM_DB_URL: ${{ secrets.EXAM_DB_URL }}
           FRONTEND_HOST: ${{ secrets.NEXT_PUBLIC_FRONTEND }}
         run: |
+          # Tự ghép chuỗi kết nối từ DB_USER/DB_PASSWORD: host luôn là service "postgres" trong cụm,
+          # user/mật khẩu luôn khớp với Postgres được khởi tạo bằng chính 2 secret này
+          # (không còn phụ thuộc secret USERS_DB_URL / EXAM_DB_URL, tránh nhầm localhost).
+          $u = [uri]::EscapeDataString($env:DB_USER)
+          $p = [uri]::EscapeDataString($env:DB_PASSWORD)
+          $usersDb = "postgresql://${u}:${p}@postgres:5432/users_ssl_db"
+          $examDb  = "postgresql://${u}:${p}@postgres:5432/exams_ssl_db"
+
           kubectl create secret generic backend-secrets -n ssl `
             --from-literal=SECRET_KEY="$env:SECRET_KEY" `
             --from-literal=CLIENT_ID="$env:CLIENT_ID" `
             --from-literal=CLIENT_SECRET_KEY="$env:CLIENT_SECRET_KEY" `
             --from-literal=DB_USER="$env:DB_USER" `
             --from-literal=DB_PASSWORD="$env:DB_PASSWORD" `
-            --from-literal=USERS_DB_URL="$env:USERS_DB_URL" `
-            --from-literal=EXAM_DB_URL="$env:EXAM_DB_URL" `
+            --from-literal=USERS_DB_URL="$usersDb" `
+            --from-literal=EXAM_DB_URL="$examDb" `
             --from-literal=FRONTEND_HOST="$env:FRONTEND_HOST" `
             --from-literal=BACKEND_CORS_ORIGINS="$env:FRONTEND_HOST" `
             --dry-run=client -o yaml | kubectl apply -n ssl -f -
@@ -150,8 +176,15 @@ jobs:
           kubectl apply -n ssl -f k8s/postgres.yml
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-          kubectl rollout status -n ssl statefulset/postgres --timeout=180s
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          kubectl rollout status -n ssl statefulset/postgres --timeout=300s
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "=== DIAGNOSTICS: Postgres khong san sang ==="
+            kubectl get pods,pvc -n ssl -o wide
+            kubectl describe pod postgres-0 -n ssl
+            kubectl logs postgres-0 -n ssl --tail=60
+            kubectl get events -n ssl --sort-by=.lastTimestamp
+            exit 1
+          }
 
           # Script init của Postgres chỉ chạy khi volume còn trống, nên tạo DB còn thiếu ở đây
           foreach ($db in @('users_ssl_db', 'exams_ssl_db')) {
@@ -182,5 +215,17 @@ jobs:
 
           foreach ($d in @('auth-service', 'exam-service', 'frontend')) {
             kubectl rollout status -n ssl deployment/$d --timeout=240s
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            if ($LASTEXITCODE -ne 0) {
+              Write-Host "=== DIAGNOSTICS: $d khong san sang ==="
+              kubectl get pods -n ssl -o wide
+              kubectl describe pods -n ssl -l app=$d
+              kubectl logs -n ssl -l app=$d --tail=60 --prefix
+              kubectl get events -n ssl --sort-by=.lastTimestamp
+              exit 1
+            }
           }
+
+      - name: Show result
+        shell: powershell
+        run: |
+          kubectl get pods,svc -n ssl
