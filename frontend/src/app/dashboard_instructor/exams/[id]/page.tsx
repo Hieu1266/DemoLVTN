@@ -81,7 +81,7 @@ export default function ExamDetailPage() {
         listQuestions(id),
       ]);
       setExam(examData);
-      setQuestions(questionsData || []);
+      setQuestions((questionsData || []) as unknown as Question[]);
     } catch (err) {
       setError(errMsg(err));
     } finally {

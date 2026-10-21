@@ -108,7 +108,7 @@ export default function ResultsPage() {
                   const score = r.total_score ?? r.score;
                   const maxScore = r.max_score ?? r.total_points ?? 10;
                   const submittedAt = r.submitted_at || r.completed_at;
-                  const canReview = r.review_allowed ?? r.allow_review_answers ?? True;
+                  const canReview = r.review_allowed ?? r.allow_review_answers ?? true;
                   const isPending = r.status === "NEEDS_GRADING" || score === null;
 
                   return (

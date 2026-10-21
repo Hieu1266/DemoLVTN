@@ -7,6 +7,7 @@ export interface ExamPayload {
   exam_name: string;
   access_code: string;
   duration_minutes: number;
+  max_attempts?: number | null;
   allow_review_answers: boolean;
   start_at?: string | null;
   end_at?: string | null;
