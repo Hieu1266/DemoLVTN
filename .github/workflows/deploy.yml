@@ -1,123 +1,178 @@
-name: Build & Deploy (k8s)
+name: Build and Deploy to K8s
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'backend/services/**'
+      - 'frontend/**'
+      - 'k8s/**'
+      - '.github/workflows/**'
 
 env:
-  # Tên image khớp với k8s/*.yml hiện tại (auth_service dùng gạch dưới, các cái còn lại gạch ngang)
-  REGISTRY_USER: ${{ secrets.DOCKER_USERNAME }}
+  DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+  DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
 
 jobs:
-  build:
-    runs-on: self-hosted
+  # ==========================================
+  # JOB 1: Build & Push các Backend Service
+  # (tên image phải khớp với k8s/backend.yml)
+  # ==========================================
+  build-backend:
+    runs-on: ubuntu-latest
     strategy:
-      fail-fast: true
       matrix:
         include:
-          - name: auth
+          - service: auth
             image: auth_service
-            context: backend/services/auth
-          - name: exam
+          - service: exam
             image: exam-service
-            context: backend/services/exam
-          - name: frontend
-            image: frontend
-            context: frontend
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout Code
+        uses: actions/checkout@v4
 
-      - name: Docker login
-        run: echo "${{ secrets.DOCKER_PASSWORD }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ env.DOCKER_USERNAME }}
+          password: ${{ env.DOCKER_PASSWORD }}
 
-      - name: Build image
-        env:
-          NEXT_PUBLIC_AUTH_API_URL: ${{ vars.NEXT_PUBLIC_AUTH_API_URL }}
-          NEXT_PUBLIC_EXAM_API_URL: ${{ vars.NEXT_PUBLIC_EXAM_API_URL }}
-        run: |
-          IMAGE="${REGISTRY_USER}/${{ matrix.image }}"
-          ARGS=()
-          # NEXT_PUBLIC_* được nhúng lúc build nên phải truyền bằng build-arg
-          if [ "${{ matrix.name }}" = "frontend" ]; then
-            ARGS+=(--build-arg "NEXT_PUBLIC_AUTH_API_URL=${NEXT_PUBLIC_AUTH_API_URL}")
-            ARGS+=(--build-arg "NEXT_PUBLIC_EXAM_API_URL=${NEXT_PUBLIC_EXAM_API_URL}")
-          fi
-          docker build "${ARGS[@]}" -t "${IMAGE}:${GITHUB_SHA}" -t "${IMAGE}:latest" "${{ matrix.context }}"
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-      - name: Push image
-        run: |
-          IMAGE="${REGISTRY_USER}/${{ matrix.image }}"
-          docker push "${IMAGE}:${GITHUB_SHA}"
-          docker push "${IMAGE}:latest"
+      - name: Build and Push Backend Image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend/services/${{ matrix.service }}
+          file: ./backend/services/${{ matrix.service }}/Dockerfile
+          push: true
+          tags: ${{ env.DOCKER_USERNAME }}/${{ matrix.image }}:latest
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
 
-  deploy:
-    needs: build
+  # ==========================================
+  # JOB 2: Build & Push Next.js Frontend
+  # ==========================================
+  build-frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ env.DOCKER_USERNAME }}
+          password: ${{ env.DOCKER_PASSWORD }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and Push Frontend Image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile
+          push: true
+          tags: ${{ env.DOCKER_USERNAME }}/frontend:latest
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
+          # Trình duyệt gọi thẳng auth-service (NodePort 30000) và exam-service (NodePort 30001)
+          build-args: |
+            NEXT_PUBLIC_AUTH_API_URL=${{ secrets.NEXT_PUBLIC_AUTH_API_URL }}
+            NEXT_PUBLIC_EXAM_API_URL=${{ secrets.NEXT_PUBLIC_EXAM_API_URL }}
+
+  # ==========================================
+  # JOB 3: Deploy lên Kubernetes (self-hosted runner)
+  # ==========================================
+  deploy-k8s:
+    needs: [build-backend, build-frontend]
     runs-on: self-hosted
-    env:
-      DB_USER: ${{ secrets.DB_USER }}
-      DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout Code
+        uses: actions/checkout@v4
 
-      # Chỉ cần khi runner KHÔNG nằm cùng máy/cluster với kubectl đã cấu hình sẵn
-      - name: Setup kubeconfig (optional)
-        if: ${{ secrets.KUBE_CONFIG != '' }}
-        env:
-          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+      # Chờ API server của Kubernetes trả lời (tránh lỗi connection refused khi Docker Desktop vừa bật)
+      - name: Wait for Kubernetes
+        shell: powershell
         run: |
-          mkdir -p "$HOME/.kube"
-          printf '%s' "$KUBE_CONFIG" > "$HOME/.kube/config"
-          chmod 600 "$HOME/.kube/config"
+          for ($i = 0; $i -lt 12; $i++) {
+            kubectl get nodes 2>$null | Out-Null
+            if ($LASTEXITCODE -eq 0) { exit 0 }
+            Start-Sleep -Seconds 10
+          }
+          Write-Host "Khong ket noi duoc Kubernetes. Hay kiem tra Docker Desktop da bat Kubernetes chua."
+          exit 1
 
-      - name: Render manifests (image user + tag theo commit)
-        run: |
-          sed -i "s#DOCKER_USER/#${{ secrets.DOCKER_USERNAME }}/#g; s#:latest#:${GITHUB_SHA}#g" \
-            k8s/backend.yml k8s/frontend.yml
-
-      - name: Create/Update backend-secrets
+      # Secret dùng chung cho Postgres, auth-service và exam-service
+      # (không đặt ALGORITHM: để rỗng sẽ ghi đè giá trị mặc định HS256 và làm hỏng JWT)
+      - name: Create backend secret
+        shell: powershell
         env:
           SECRET_KEY: ${{ secrets.SECRET_KEY }}
           CLIENT_ID: ${{ secrets.CLIENT_ID }}
           CLIENT_SECRET_KEY: ${{ secrets.CLIENT_SECRET_KEY }}
-          FRONTEND_HOST: ${{ vars.FRONTEND_HOST }}
-          BACKEND_USER_URL: ${{ vars.BACKEND_USER_URL }}
+          DB_USER: ${{ secrets.DB_USER }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          USERS_DB_URL: ${{ secrets.USERS_DB_URL }}
+          EXAM_DB_URL: ${{ secrets.EXAM_DB_URL }}
+          FRONTEND_HOST: ${{ secrets.NEXT_PUBLIC_FRONTEND }}
         run: |
-          # URL-encode mật khẩu để không vỡ connection string khi có ký tự đặc biệt
-          ENC_PW=$(python3 -c "import os,urllib.parse as u;print(u.quote(os.environ['DB_PASSWORD'],safe=''))")
-          kubectl create secret generic backend-secrets \
-            --from-literal=DB_USER="$DB_USER" \
-            --from-literal=DB_PASSWORD="$DB_PASSWORD" \
-            --from-literal=SECRET_KEY="$SECRET_KEY" \
-            --from-literal=CLIENT_ID="$CLIENT_ID" \
-            --from-literal=CLIENT_SECRET_KEY="$CLIENT_SECRET_KEY" \
-            --from-literal=FRONTEND_HOST="$FRONTEND_HOST" \
-            --from-literal=BACKEND_USER_URL="$BACKEND_USER_URL" \
-            --from-literal=USERS_DB_URL="postgresql://${DB_USER}:${ENC_PW}@postgres:5432/users_ssl_db" \
-            --from-literal=EXAM_DB_URL="postgresql://${DB_USER}:${ENC_PW}@postgres:5432/exams_ssl_db" \
+          kubectl create secret generic backend-secrets `
+            --from-literal=SECRET_KEY="$env:SECRET_KEY" `
+            --from-literal=CLIENT_ID="$env:CLIENT_ID" `
+            --from-literal=CLIENT_SECRET_KEY="$env:CLIENT_SECRET_KEY" `
+            --from-literal=DB_USER="$env:DB_USER" `
+            --from-literal=DB_PASSWORD="$env:DB_PASSWORD" `
+            --from-literal=USERS_DB_URL="$env:USERS_DB_URL" `
+            --from-literal=EXAM_DB_URL="$env:EXAM_DB_URL" `
+            --from-literal=FRONTEND_HOST="$env:FRONTEND_HOST" `
+            --from-literal=BACKEND_CORS_ORIGINS="$env:FRONTEND_HOST" `
             --dry-run=client -o yaml | kubectl apply -f -
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Deploy Postgres
+      # Postgres phải sẵn sàng và có đủ database trước khi chạy các service
+      - name: Deploy Postgres and ensure databases
+        shell: powershell
+        env:
+          DB_USER: ${{ secrets.DB_USER }}
         run: |
           kubectl apply -f k8s/postgres.yml
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
           kubectl rollout status statefulset/postgres --timeout=180s
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Ensure databases exist (idempotent)
-        run: |
-          for db in users_ssl_db exams_ssl_db; do
-            kubectl exec postgres-0 -- sh -c \
-              "psql -U \"$DB_USER\" -d postgres -tAc \"SELECT 1 FROM pg_database WHERE datname='$db'\" | grep -q 1 \
-               || psql -U \"$DB_USER\" -d postgres -c 'CREATE DATABASE $db'"
-          done
+          # Script init của Postgres chỉ chạy khi volume còn trống, nên tạo DB còn thiếu ở đây
+          foreach ($db in @('users_ssl_db', 'exams_ssl_db')) {
+            $exists = kubectl exec postgres-0 -- psql -U $env:DB_USER -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='$db'"
+            if ("$exists".Trim() -ne '1') {
+              Write-Host "Create database $db"
+              kubectl exec postgres-0 -- psql -U $env:DB_USER -d postgres -c "CREATE DATABASE $db"
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            }
+          }
 
-      - name: Deploy services
+      # Thay DOCKER_USER trong manifest bằng Docker Hub username thật rồi apply.
+      # Mỗi lệnh kubectl đều kiểm tra mã thoát để bước này báo lỗi đúng chỗ.
+      - name: Deploy Manifests
+        shell: powershell
         run: |
-          kubectl apply -f k8s/backend.yml
-          kubectl apply -f k8s/frontend.yml
-          kubectl apply -f k8s/auto-scaling.yml
+          foreach ($f in @('backend', 'frontend', 'auto-scaling')) {
+            Write-Host "Apply k8s/$f.yml"
+            (Get-Content "k8s/$f.yml" -Raw) -replace 'DOCKER_USER', $env:DOCKER_USERNAME | kubectl apply -f -
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
 
-      - name: Wait for rollout
-        run: |
-          kubectl rollout status deployment/auth-service --timeout=180s
-          kubectl rollout status deployment/exam-service --timeout=180s
-          kubectl rollout status deployment/frontend --timeout=240s
+          # Image dùng tag :latest nên phải restart để pod kéo image mới
+          foreach ($d in @('auth-service', 'exam-service', 'frontend')) {
+            kubectl rollout restart deployment/$d
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
+          foreach ($d in @('auth-service', 'exam-service', 'frontend')) {
+            kubectl rollout status deployment/$d --timeout=240s
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
