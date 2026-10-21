@@ -6,7 +6,7 @@ data:
   init-multi-db.sh: |
     #!/bin/bash
     set -e
-    for db in users_db courses_db quizs_exam_db learnings_db config_db; do
+    for db in users_ssl_db exams_ssl_db; do
       psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" -c "CREATE DATABASE $db"
     done
 ---
@@ -39,7 +39,9 @@ spec:
       - name: postgres
         image: postgres:16-alpine
         # Tăng trần kết nối lên 500 để chịu tải khi HPA scale 20 pod backend
-        command: ["postgres", "-c", "max_connections=500", "-c", "shared_buffers=256MB"]
+        # Dùng args (không dùng command) để giữ docker-entrypoint.sh: nó mới tạo user/password và chạy init script,
+        # và tự hạ quyền từ root xuống user postgres
+        args: ["postgres", "-c", "max_connections=500", "-c", "shared_buffers=256MB"]
         ports:
         - containerPort: 5432
         env:
