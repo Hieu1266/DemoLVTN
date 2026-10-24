@@ -24,7 +24,7 @@ export default function CreateInstructorPage() {
     username: "",
     email: "",
     password: "",
-    role_id: 2, // 2: Instructor
+    role_id: 3, // 2: Instructor
     firstname: "",
     lastname: "",
     bio: "",
