@@ -24,7 +24,7 @@ export default function CreateInstructorPage() {
     username: "",
     email: "",
     password: "",
-    role_id: 3, // 2: Instructor
+    role_id: 3,
     firstname: "",
     lastname: "",
     bio: "",
@@ -283,7 +283,7 @@ export default function CreateInstructorPage() {
                 onChange={(e) => setInstructorForm({ ...instructorForm, role_id: Number(e.target.value) })}
                 className="w-full rounded-2xl border border-slate-200 bg-slate-50/50 px-4 py-3 text-xs font-bold text-slate-800 outline-none focus:border-indigo-500 focus:bg-white focus:ring-4 focus:ring-indigo-500/10 transition"
               >
-                <option value={2}>Giảng Viên (Instructor - Role ID: 2)</option>
+                <option value={3}>Giảng Viên (Instructor - Role ID: 2)</option>
                 <option value={1}>Quản Trị Viên (Admin - Role ID: 1)</option>
               </select>
             </div>
