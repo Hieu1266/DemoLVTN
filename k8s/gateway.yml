@@ -1,0 +1,68 @@
+# ==========================================
+# API GATEWAY SERVICE
+# ==========================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-gateway
+  namespace: ssl
+  labels:
+    app: api-gateway
+spec:
+  replicas: 2 # Scale 2 pod gateway để chống single-point-of-failure
+  selector:
+    matchLabels:
+      app: api-gateway
+  template:
+    metadata:
+      labels:
+        app: api-gateway
+    spec:
+      containers:
+      - name: api-gateway
+        image: DOCKER_USER/ssl-api-gateway:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8088
+        env:
+        # Điều hướng trực tiếp tới K8s Service DNS nội bộ cụm
+        - name: AUTH_SERVICE_URL
+          value: "http://auth-service:8000"
+        - name: EXAM_SERVICE_URL
+          value: "http://exam-service:8001"
+        envFrom:
+        - secretRef:
+            name: backend-secrets
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8088
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8088
+          initialDelaySeconds: 10
+          periodSeconds: 15
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "1000m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-gateway
+  namespace: ssl
+spec:
+  type: NodePort
+  ports:
+  - port: 8088
+    targetPort: 8088
+    nodePort: 30888 # Cổng NodePort công khai cho Frontend / K6 client gọi vào
+  selector:
+    app: api-gateway

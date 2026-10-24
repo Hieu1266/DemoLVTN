@@ -13,13 +13,35 @@ const users = new SharedArray('users_data', function () {
 export const options = {
   // Cấu hình tăng tải từ nhẹ đến đỉnh điểm 1,000 VUs
   stages: [
-    { duration: '30s', target: 10 },   // Warm-up 10 VUs
-    { duration: '30s', target: 50 },   
-    { duration: '30s', target: 100 },  
-    { duration: '1m',  target: 200 },  
-    // { duration: '1m',  target: 500 },  
-    // { duration: '2m',  target: 1000 }, // Giữ mức đỉnh 1,000 VUs trong 2 phút
-    { duration: '30s', target: 0 },    // Ramp-down giảm tải
+    // Mốc 1 VU: Chạy 30s để lấy Baseline chuẩn
+    // { duration: '30s', target: 1 },
+
+    // // Ramp-up lên 10 VUs (15s) và Giữ tải 10 VUs (30s)
+    // { duration: '15s', target: 10 },
+    // { duration: '30s', target: 10 },
+
+    // // Ramp-up lên 50 VUs (15s) và Giữ tải 50 VUs (30s)
+    // { duration: '15s', target: 50 },
+    // { duration: '30s', target: 50 },
+
+    // // Ramp-up lên 100 VUs (15s) và Giữ tải 100 VUs (1m)
+    // { duration: '15s', target: 100 },
+    // { duration: '1m',  target: 100 },
+
+    // // Ramp-up lên 500 VUs (30s) và Giữ tải 500 VUs (1m)
+    // { duration: '30s', target: 500 },
+    // { duration: '1m',  target: 500 },
+
+    // // Ramp-up lên 1000 VUs (30s) và Giữ tải 1000 VUs (1m)
+    // { duration: '30s', target: 1000 },
+    // { duration: '1m',  target: 1000 },
+
+    // // Ramp-up lên 4000 VUs (1m) và Giữ tải 4000 VUs (1m) - Mốc Stress Test
+    { duration: '1m',  target: 4000 },
+    { duration: '1m',  target: 4000 },
+
+    // // Ramp-down giảm tải về 0
+    { duration: '30s', target: 0 },
   ],
   thresholds: {
     http_req_duration: ['p(95)<2000'], // Latency p95 kỳ vọng < 2s
@@ -29,7 +51,7 @@ export const options = {
 
 // Cấu hình NodePort của Exam Service trên K8s cluster
 const EXAM_URL = 'http://localhost:31001/api/v1'; 
-const ACCESS_CODE = '4SUFSH'; // Mã PIN phòng thi
+const ACCESS_CODE = 'X4B25K'; // Mã PIN phòng thi
 
 export default function () {
   // Phân bổ đều 2,000 user cho các VUs theo vòng lặp
