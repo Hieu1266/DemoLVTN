@@ -17,8 +17,8 @@ export const options = {
     { duration: '30s', target: 50 },   
     { duration: '30s', target: 100 },  
     { duration: '1m',  target: 200 },  
-    { duration: '1m',  target: 500 },  
-    { duration: '2m',  target: 1000 }, // Giữ mức đỉnh 1,000 VUs trong 2 phút
+    // { duration: '1m',  target: 500 },  
+    // { duration: '2m',  target: 1000 }, // Giữ mức đỉnh 1,000 VUs trong 2 phút
     { duration: '30s', target: 0 },    // Ramp-down giảm tải
   ],
   thresholds: {
@@ -29,7 +29,7 @@ export const options = {
 
 // Cấu hình NodePort của Exam Service trên K8s cluster
 const EXAM_URL = 'http://localhost:31001/api/v1'; 
-const ACCESS_CODE = 'YMY8S3'; // Mã PIN phòng thi
+const ACCESS_CODE = '4SUFSH'; // Mã PIN phòng thi
 
 export default function () {
   // Phân bổ đều 2,000 user cho các VUs theo vòng lặp
