@@ -2,21 +2,18 @@ import asyncio
 import json
 import httpx
 
-# Cấu hình URL Auth Service (NodePort trên K8s)
 BASE_URL = "http://localhost:31000"  
 REGISTER_URL = f"{BASE_URL}/api/v1/users/register"
 LOGIN_URL = f"{BASE_URL}/api/v1/users/login"
 
-# Nâng số lượng user cần tạo lên 2000
 NUM_USERS = 2000
 
-async def create_user(client, index, semaphore):
+async def create_and_login_user(client, index, semaphore):
     async with semaphore:
         username = f"student_{index}"
         password = "Password123!"
         email = f"student_{index}@exam.com"
 
-        # Payload Đăng ký
         reg_payload = {
             "username": username,
             "email": email,
@@ -25,45 +22,61 @@ async def create_user(client, index, semaphore):
             "role": "student"
         }
 
+        # 1. Register User
         try:
-            # 1. Gọi API Register
             await client.post(REGISTER_URL, json=reg_payload)
-            
-            # 2. Gọi API Login lấy Token sẵn
-            login_payload = {"username": username, "password": password}
-            login_resp = await client.post(LOGIN_URL, json=login_payload)
-            
-            token = ""
-            if login_resp.status_code == 200:
-                data = login_resp.json()
-                token = data.get("access_token") or data.get("token", "")
+        except Exception:
+            pass
 
-            return {
-                "id": index,
-                "username": username,
-                "password": password,
-                "token": token
-            }
+        # 2. Login User (Thử gửi data dạng x-www-form-urlencoded chuẩn OAuth2 của FastAPI)
+        login_form_data = {
+            "username": username, # Hoặc thay email nếu backend bắt đăng nhập bằng email
+            "password": password
+        }
+
+        token = ""
+        try:
+            # Gửi dạng data= thay vì json= để chuẩn x-www-form-urlencoded
+            login_resp = await client.post(LOGIN_URL, data=login_form_data)
+            
+            # Nếu vẫn 422, thử fallback gửi bằng json
+            if login_resp.status_code == 422:
+                login_resp = await client.post(LOGIN_URL, json={"username": username, "password": password})
+                if login_resp.status_code == 422:
+                    login_resp = await client.post(LOGIN_URL, json={"email": email, "password": password})
+
+            if login_resp.status_code == 200:
+                res_json = login_resp.json()
+                token = res_json.get("access_token") or res_json.get("token", "")
+            else:
+                if index == 1: # In ra body lỗi của user đầu tiên để dễ check field
+                    print(f"❌ Chi tiết lỗi Status {login_resp.status_code}: {login_resp.text}")
         except Exception as e:
-            print(f"❌ Lỗi tạo user {username}: {e}")
-            return None
+            print(f"❌ Exception user {username}: {e}")
+
+        return {
+            "id": index,
+            "username": username,
+            "password": password,
+            "token": token
+        }
 
 async def main():
-    print(f"🚀 Đang khởi tạo {NUM_USERS} users vào Database...")
-    # Giữ Semaphore = 50 để gửi request dồn dập nhưng không làm ngợp DB lúc seed
+    print(f"🚀 Đang tạo và lấy Token cho {NUM_USERS} users...")
     semaphore = asyncio.Semaphore(50)
     
     async with httpx.AsyncClient(timeout=30.0) as client:
-        tasks = [create_user(client, i, semaphore) for i in range(1, NUM_USERS + 1)]
+        tasks = [create_and_login_user(client, i, semaphore) for i in range(1, NUM_USERS + 1)]
         results = await asyncio.gather(*tasks)
 
     valid_users = [u for u in results if u is not None]
-    print(f"✅ Đã tạo thành công {len(valid_users)}/{NUM_USERS} users!")
+    success_tokens = [u for u in valid_users if u["token"] != ""]
+    
+    print(f"\n✅ Đã cấp Token thành công cho {len(success_tokens)}/{NUM_USERS} users!")
 
-    # Lưu ra file users.json để K6 dùng
     with open("users.json", "w", encoding="utf-8") as f:
         json.dump(valid_users, f, indent=2, ensure_ascii=False)
-    print("📁 Đã cập nhật file 'users.json' với 2,000 users!")
+    print("📁 Đã lưu danh sách vào file 'users.json'!")
 
 if __name__ == "__main__":
     asyncio.run(main())

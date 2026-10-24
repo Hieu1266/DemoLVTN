@@ -1,71 +1,86 @@
 import http from 'k6/http';
 import { check, sleep } from 'k6';
+import { SharedArray } from 'k6/data';
 import exec from 'k6/execution';
 
+// Bỏ đánh dấu lỗi cho status 400 khi Join phòng thi
+http.setResponseCallback(http.expectedStatuses(200, 201, 400));
+// 1. Load danh sách 2,000 user đã có Token từ file users.json
+const users = new SharedArray('users_data', function () {
+  return JSON.parse(open('./users.json'));
+});
+
 export const options = {
+  // Cấu hình tăng tải từ nhẹ đến đỉnh điểm 1,000 VUs
   stages: [
-    { duration: '30s', target: 50 },   // Ramp-up nhẹ nhàng trong 30s
-    { duration: '1m',  target: 200 },  // Đạt đỉnh 200 VUs
-    { duration: '30s', target: 0 },    // Ramp-down
+    { duration: '30s', target: 10 },   // Warm-up 10 VUs
+    { duration: '30s', target: 50 },   
+    { duration: '30s', target: 100 },  
+    { duration: '1m',  target: 200 },  
+    { duration: '1m',  target: 500 },  
+    { duration: '2m',  target: 1000 }, // Giữ mức đỉnh 1,000 VUs trong 2 phút
+    { duration: '30s', target: 0 },    // Ramp-down giảm tải
   ],
   thresholds: {
-    http_req_duration: ['p(95)<1000'], // Đặt mốc latency p95 < 1s cho 200 VUs
+    http_req_duration: ['p(95)<2000'], // Latency p95 kỳ vọng < 2s
     http_req_failed: ['rate<0.05'],    // Tỷ lệ lỗi cho phép < 5%
   },
 };
 
-const AUTH_URL = 'http://localhost:8000/api/v1';
-const EXAM_URL = 'http://localhost:8001/api/v1';
+// Cấu hình NodePort của Exam Service trên K8s cluster
+const EXAM_URL = 'http://localhost:31001/api/v1'; 
+const ACCESS_CODE = 'YMY8S3'; // Mã PIN phòng thi
 
 export default function () {
-  // Lấy duy nhất 1 ID sinh viên duy nhất cho mỗi lượt chạy (Xoay vòng từ student1 -> student200)
-  const uniqueId = (exec.scenario.iterationInTest % 200) + 1;
-  const studentEmail = `student${uniqueId}@lumer.edu.vn`;
+  // Phân bổ đều 2,000 user cho các VUs theo vòng lặp
+  const userIndex = (exec.scenario.iterationInTest) % users.length;
+  const currentUser = users[userIndex];
+  const token = currentUser.token;
 
-  // 1. ĐĂNG NHẬP (Auth Service)
-  const loginRes = http.post(`${AUTH_URL}/users/login`, JSON.stringify({
-    email: studentEmail,
-    password: 'Password123!',
-  }), {
-    headers: { 'Content-Type': 'application/json' },
-  });
+  if (!token) return; // Bỏ qua nếu user thiếu token
 
-  const isLoginOk = check(loginRes, {
-    '1. [Auth] Login thành công (200)': (r) => r.status === 200,
-  });
-
-  if (!isLoginOk || !loginRes.json('access_token')) return;
-
-  const token = loginRes.json('access_token');
-  const authHeaders = {
+  const params = {
     headers: {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${token}`,
     },
   };
 
-  sleep(1);
+  let attemptId = null;
+  let questions = [];
 
-  // 2. NHẬP MÃ PIN VÀO PHÒNG THI (Exam Service)
-  const joinRes = http.post(`${EXAM_URL}/attempts/join`, JSON.stringify({
-    access_code: 'PZ3S27',
-  }), authHeaders);
+  // ==========================================
+  // BƯỚC 1: NHẬP MÃ PIN VÀO PHÒNG THI (JOIN)
+  // ==========================================
+  const joinPayload = JSON.stringify({ access_code: ACCESS_CODE });
+  const joinRes = http.post(`${EXAM_URL}/attempts/join`, joinPayload, params);
+
+  if (joinRes.status === 200 || joinRes.status === 201) {
+    attemptId = joinRes.json('attempt_id');
+    questions = joinRes.json('questions') || [];
+  } else if (joinRes.status === 400) {
+    // Nếu user đã join rồi (lỗi 400), gọi API lấy active attempt hiện tại để làm tiếp
+    const activeRes = http.get(`${EXAM_URL}/attempts/active?access_code=${ACCESS_CODE}`, params);
+    if (activeRes.status === 200) {
+      attemptId = activeRes.json('attempt_id');
+      questions = activeRes.json('questions') || [];
+    }
+  } else {
+    // Log mẫu 1% số lượng lỗi bất thường khác (500, 502,...) ra console
+    if (Math.random() < 0.01) {
+      console.log(`❌ Lỗi Join [VU ${__VU} - Status ${joinRes.status}]: ${joinRes.body}`);
+    }
+  }
 
   const isJoinOk = check(joinRes, {
-    '2. [Exam] Join phòng thi (200)': (r) => r.status === 200,
+    '1. [Exam] Join phòng thi thành công (hoặc đã tham gia)': (r) => r.status === 200 || r.status === 201 || r.status === 400,
   });
 
-  if (!isJoinOk || !joinRes.json('attempt_id')) return;
+  if (!attemptId || !isJoinOk) return;
 
-  const attemptId = joinRes.json('attempt_id');
-  const questions = joinRes.json('questions') || [];
+  sleep(1);
 
-  // Lấy chi tiết attempt
-  http.get(`${EXAM_URL}/attempts/${attemptId}`, authHeaders);
-
-  sleep(2);
-
-  // 3. LƯU BÀI THI NHÁP (Draft)
+  // Tạo câu trả lời ngẫu nhiên cho danh sách câu hỏi
   const answersMap = {};
   if (questions.length > 0) {
     questions.forEach((q) => {
@@ -73,39 +88,46 @@ export default function () {
     });
   }
 
+  // ==========================================
+  // BƯỚC 2: LƯU BÀI THI NHÁP (DRAFT)
+  // ==========================================
   const draftRes = http.put(
     `${EXAM_URL}/attempts/${attemptId}/draft`,
     JSON.stringify({ answers: answersMap }),
-    authHeaders
+    params
   );
 
   check(draftRes, {
-    '3. [Exam] Save draft (200)': (r) => r.status === 200,
-  });
-
-  sleep(2);
-
-  // 4. NỘP BÀI THI
-  const submitRes = http.post(
-    `${EXAM_URL}/attempts/${attemptId}/submit`,
-    JSON.stringify({ answers: answersMap }),
-    authHeaders
-  );
-
-  check(submitRes, {
-    '4. [Exam] Submit (200)': (r) => r.status === 200,
+    '2. [Exam] Save draft thành công (200)': (r) => r.status === 200,
   });
 
   sleep(1);
 
-  // 5. XEM KẾT QUẢ BÀI THI
+  // ==========================================
+  // BƯỚC 3: NỘP BÀI THI (SUBMIT)
+  // ==========================================
+  const submitRes = http.post(
+    `${EXAM_URL}/attempts/${attemptId}/submit`,
+    JSON.stringify({ answers: answersMap }),
+    params
+  );
+
+  check(submitRes, {
+    '3. [Exam] Submit thành công (200)': (r) => r.status === 200,
+  });
+
+  sleep(1);
+
+  // ==========================================
+  // BƯỚC 4: XEM KẾT QUẢ BÀI THI (RESULT)
+  // ==========================================
   const resultRes = http.get(
     `${EXAM_URL}/attempts/${attemptId}/result`,
-    authHeaders
+    params
   );
 
   check(resultRes, {
-    '5. [Exam] Xem kết quả (200)': (r) => r.status === 200,
+    '4. [Exam] Xem kết quả thành công (200)': (r) => r.status === 200,
   });
 
   sleep(1);

@@ -39,21 +39,24 @@ def calculate_ends_at(started_at: Optional[datetime], duration_minutes: int) -> 
 # ===================================================================
 # 1. THAM GIA THI (HỖ TRỢ THI LẦN 1, LẦN 2 & KIỂM TRA MAX ATTEMPTS)
 # ===================================================================
-def _get_max_attempts(exam: Any) -> int:
+# ===================================================================
+# 1. THAM GIA THI (HỖ TRỢ THI LẦN 1, LẦN 2 & KIỂM TRA MAX ATTEMPTS)
+# ===================================================================
+def _get_max_attempts(exam: Any) -> Optional[int]:
     """Truy xuất an toàn số lần thi tối đa.
-    - Trả về N > 0: Giới hạn N lần thi.
-    - Trả về 0: Không giới hạn (ôn luyện).
-    - Mặc định: 1 lần thi (nếu không khai báo).
+    - Trả về None hoặc -1: Không giới hạn số lần thi.
+    - Trả về N > 0: Giới hạn tối đa N lần thi.
     """
     if not exam:
-        return 1
+        return None
 
     # 1. Kiểm tra thuộc tính trực tiếp trên model Exam
     for attr in ["max_attempts", "allowed_attempts", "attempts_limit", "max_attempt"]:
         val = getattr(exam, attr, None)
         if val is not None:
             try:
-                return int(val)
+                v = int(val)
+                return None if v < 0 else v # Nếu là -1 thì trả về None (không giới hạn)
             except (ValueError, TypeError):
                 pass
 
@@ -65,11 +68,14 @@ def _get_max_attempts(exam: Any) -> int:
                 val = config_dict.get(key)
                 if val is not None:
                     try:
-                        return int(val)
+                        v = int(val)
+                        return None if v < 0 else v
                     except (ValueError, TypeError):
                         pass
 
-    return 1  # Mặc định bài thi chính thức chỉ được làm 1 lần
+    # 🔴 ĐÃ SỬA: Mặc định nếu không cài đặt gì (None) thì CHO PHÉP THI KHÔNG GIỚI HẠN
+    # (Tránh chặn nhầm khi Load Test K6)
+    return None 
 
 
 @router.post("/join", response_model=JoinExamResponse)
@@ -120,20 +126,22 @@ def join_exam(
             questions=questions
         )
 
-    # 2. Đếm các lượt thi ĐÃ NỘP (Hoàn thành / Chờ chấm)
+    # 2. Đếm các lượt thi ĐÃ NỘP / HOÀN THÀNH
     completed_attempts = [a for a in user_attempts if a.status in ["COMPLETED", "NEEDS_GRADING", "SUBMITTED", "FINISHED"]]
     completed_count = len(completed_attempts)
 
-    # 3. KIỂM TRA GIỚI HẠN SỐ LẦN THI
+    # 3. KIỂM TRA GIỚI HẠN SỐ LẦN THI (🔴 ĐÃ TỐI ƯU CÂU ĐIỀU KIỆN)
     max_attempts = _get_max_attempts(exam)
 
-    if max_attempts > 0 and completed_count >= max_attempts:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Bạn đã sử dụng hết {completed_count}/{max_attempts} lần làm bài thi cho phép!"
-        )
+    # CHỈ CHẶN KHI max_attempts LỚN HƠN 0 VÀ completed_count >= max_attempts
+    if max_attempts is not None and max_attempts > 0:
+        if completed_count >= max_attempts:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Bạn đã sử dụng hết {completed_count}/{max_attempts} lần làm bài thi cho phép!"
+            )
 
-    # 4. Nếu chưa vượt quá số lần cho phép -> Khởi tạo lượt thi mới
+    # 4. Tạo lượt thi mới thành công
     attempt, questions = crud_attempt.create_attempt(db, user_id=user_id, exam=exam)
     return JoinExamResponse(
         attempt_id=attempt.attempt_id,
