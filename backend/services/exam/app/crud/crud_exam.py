@@ -1,8 +1,26 @@
+from datetime import datetime, timezone
 from typing import List, Optional, Dict, Any
 from uuid import UUID
 from sqlmodel import Session, select
 from app.models.exam import Exam
 from app.models.question import Question
+
+
+def parse_dt(value: Any) -> Optional[datetime]:
+    """Đổi chuỗi ISO (vd '2026-10-24T12:24:00.000Z') thành datetime có múi giờ.
+
+    Frontend gửi start_at/end_at dạng chuỗi; cột TIMESTAMP WITH TIME ZONE của SQLModel
+    bắt buộc nhận datetime, nếu đưa chuỗi sẽ lỗi 'str' object has no attribute 'utcoffset'.
+    """
+    if value is None or value == "":
+        return None
+    if isinstance(value, datetime):
+        dt = value
+    else:
+        dt = datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
 
 
 def _set_model_field(obj: Any, candidates: List[str], value: Any) -> Optional[str]:
@@ -46,8 +64,8 @@ class CRUDExam:
         )
 
         _set_model_field(db_exam, ["owner_id", "user_id", "created_by"], final_owner_id)
-        _set_model_field(db_exam, ["start_at", "started_at", "opening_at"], data.get("start_at"))
-        _set_model_field(db_exam, ["end_at", "ended_at", "closing_at"], data.get("end_at"))
+        _set_model_field(db_exam, ["start_at", "started_at", "opening_at"], parse_dt(data.get("start_at")))
+        _set_model_field(db_exam, ["end_at", "ended_at", "closing_at"], parse_dt(data.get("end_at")))
         _set_model_field(db_exam, ["max_attempts", "allowed_attempts", "attempts_limit"], data.get("max_attempts"))
 
         db.add(db_exam)

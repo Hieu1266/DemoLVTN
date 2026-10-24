@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, select
 
 from app.api.v1.deps import get_db, get_current_user
-from app.crud.crud_exam import crud_exam
+from app.crud.crud_exam import crud_exam, parse_dt
 from app.crud.crud_attempt import crud_attempt
 from app.models.exam import Exam
 from app.models.attempt import Attempt
@@ -107,6 +107,8 @@ def update_exam_by_id(
     # Cập nhật linh hoạt các trường trong model Exam
     for key, value in payload.items():
         if hasattr(exam, key):
+            if key in ("start_at", "end_at"):
+                value = parse_dt(value)  # chuỗi ISO từ frontend -> datetime
             setattr(exam, key, value)
             
     # Cập nhật thời gian chỉnh sửa
