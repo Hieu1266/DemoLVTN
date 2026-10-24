@@ -56,4 +56,5 @@ HEALTHCHECK --interval=15s --timeout=3s --start-period=5s --retries=3 \
   CMD curl -f http://localhost:8088/health || exit 1
 
 # Khởi chạy API Gateway
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8088"]
+# Chạy uvicorn chỉ định module app.main:app
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8088"]
