@@ -41,11 +41,11 @@ spec:
           periodSeconds: 5
         resources:
           requests:
-            memory: "1.5Gi"
-            cpu: "1200m"
+            memory: "1Gi"
+            cpu: "1000m"
           limits:
-            memory: "3Gi"
-            cpu: "24000m"
+            memory: "2Gi"
+            cpu: "2000m"
 ---
 apiVersion: v1
 kind: Service
@@ -105,11 +105,11 @@ spec:
           periodSeconds: 5
         resources:
           requests:
-            memory: "2.5Gi"
-            cpu: "2200m"
+            memory: "1.5Gi"
+            cpu: "1500m"
           limits:
-            memory: "5Gi"
-            cpu: "4000m"
+            memory: "3Gi"
+            cpu: "3000m"
 ---
 apiVersion: v1
 kind: Service
