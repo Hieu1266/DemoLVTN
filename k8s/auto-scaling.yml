@@ -8,7 +8,7 @@ spec:
     kind: Deployment
     name: auth-service
   minReplicas: 1
-  maxReplicas: 10
+  maxReplicas: 20
   metrics:
   - type: Resource
     resource:
@@ -40,14 +40,14 @@ spec:
     kind: Deployment
     name: exam-service
   minReplicas: 1
-  maxReplicas: 10
+  maxReplicas: 20
   metrics:
   - type: Resource
     resource:
       name: cpu
       target:
         type: Utilization
-        averageUtilization: 70   # % so với requests.cpu của pod
+        averageUtilization: 65   # % so với requests.cpu của pod
   behavior:
     scaleUp:
       stabilizationWindowSeconds: 0      # tăng ngay khi vượt ngưỡng

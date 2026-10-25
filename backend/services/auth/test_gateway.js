@@ -40,12 +40,12 @@ export const options = {
     // { duration: '1m',  target: 500 },
 
     // // Ramp-up lên 1000 VUs (30s) và Giữ tải 1000 VUs (1m)
-    { duration: '30s', target: 1000 },
-    { duration: '1m',  target: 1000 },
+    // { duration: '30s', target: 1000 },
+    // { duration: '1m',  target: 1000 },
 
     // // Ramp-up lên 4000 VUs (1m) và Giữ tải 4000 VUs (1m) - Mốc Stress Test
-    // { duration: '1m',  target: 4000 },
-    // { duration: '1m',  target: 4000 },
+    { duration: '1m',  target: 4000 },
+    { duration: '1m',  target: 4000 },
 
     // // Ramp-down giảm tải về 0
     { duration: '30s', target: 0 },
