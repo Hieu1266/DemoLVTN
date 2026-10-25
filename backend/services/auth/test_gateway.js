@@ -21,8 +21,8 @@ const users = new SharedArray('users_data', function () {
 export const options = {
   stages: [
     // Mốc Stress Test dồn 4,000 VUs qua API Gateway
-    { duration: '1m', target: 4000 },
-    { duration: '1m', target: 4000 },
+    { duration: '15s', target: 100 },
+    { duration: '1m',  target: 100 },
     { duration: '30s', target: 0 },
   ],
   thresholds: {

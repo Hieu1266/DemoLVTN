@@ -1,0 +1,111 @@
+# ==========================================
+# 1. PGBOUNCER CONFIGMAP
+# ==========================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pgbouncer-config
+  namespace: ssl
+data:
+  pgbouncer.ini: |
+    [databases]
+    ; Chuyển tiếp toàn bộ DB queries sang StatefulSet postgres trong cụm
+    * = host=postgres port=5432
+
+    [pgbouncer]
+    listen_addr = 0.0.0.0
+    listen_port = 6432
+    auth_type = scram-sha-256
+    auth_file = /etc/pgbouncer/userlist.txt
+
+    ; Gom kết nối theo từng transaction (Tối ưu tuyệt đối cho SQLAlchemy / psycopg2)
+    pool_mode = transaction
+
+    ; Tăng max_client_conn để PgBouncer không từ chối kết nối từ các Pod Backend khi dồn tải
+    max_client_conn = 3000
+
+    ; Số kết nối THẬT tới Postgres
+    default_pool_size = 20
+    min_pool_size = 5
+    reserve_pool_size = 5
+    max_db_connections = 50
+
+    ; Bỏ qua các tham số khởi tạo từ SQLAlchemy
+    ignore_startup_parameters = extra_float_digits,options
+
+---
+# ==========================================
+# 2. PGBOUNCER DEPLOYMENT
+# ==========================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pgbouncer
+  namespace: ssl
+  labels:
+    app: pgbouncer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pgbouncer
+  template:
+    metadata:
+      labels:
+        app: pgbouncer
+    spec:
+      containers:
+      - name: pgbouncer
+        image: edoburu/pgbouncer:latest
+        ports:
+        - containerPort: 6432
+        volumeMounts:
+        - name: config
+          mountPath: /etc/pgbouncer/pgbouncer.ini
+          subPath: pgbouncer.ini
+          readOnly: true
+        - name: userlist
+          mountPath: /etc/pgbouncer/userlist.txt
+          subPath: userlist.txt
+          readOnly: true
+        readinessProbe:
+          tcpSocket:
+            port: 6432
+          initialDelaySeconds: 3
+          periodSeconds: 5
+        livenessProbe:
+          tcpSocket:
+            port: 6432
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "500m"
+      volumes:
+      - name: config
+        configMap:
+          name: pgbouncer-config
+      - name: userlist
+        secret:
+          secretName: pgbouncer-userlist
+
+---
+# ==========================================
+# 3. PGBOUNCER SERVICE (ClusterIP)
+# ==========================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: pgbouncer
+  namespace: ssl
+spec:
+  type: ClusterIP
+  ports:
+  - port: 6432
+    targetPort: 6432
+  selector:
+    app: pgbouncer
