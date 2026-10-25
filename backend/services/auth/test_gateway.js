@@ -20,9 +20,34 @@ const users = new SharedArray('users_data', function () {
 
 export const options = {
   stages: [
-    // Mốc Stress Test dồn 4,000 VUs qua API Gateway
-    { duration: '15s', target: 100 },
-    { duration: '1m',  target: 100 },
+    // Mốc 1 VU: Chạy 30s để lấy Baseline chuẩn
+    // { duration: '30s', target: 1 },
+
+    // // Ramp-up lên 10 VUs (15s) và Giữ tải 10 VUs (30s)
+    // { duration: '15s', target: 10 },
+    // { duration: '30s', target: 10 },
+
+    // // Ramp-up lên 50 VUs (15s) và Giữ tải 50 VUs (30s)
+    // { duration: '15s', target: 50 },
+    // { duration: '30s', target: 50 },
+
+    // // Ramp-up lên 100 VUs (15s) và Giữ tải 100 VUs (1m)
+    // { duration: '15s', target: 100 },
+    // { duration: '1m',  target: 100 },
+
+    // // Ramp-up lên 500 VUs (30s) và Giữ tải 500 VUs (1m)
+    // { duration: '30s', target: 500 },
+    // { duration: '1m',  target: 500 },
+
+    // // Ramp-up lên 1000 VUs (30s) và Giữ tải 1000 VUs (1m)
+    { duration: '30s', target: 1000 },
+    { duration: '1m',  target: 1000 },
+
+    // // Ramp-up lên 4000 VUs (1m) và Giữ tải 4000 VUs (1m) - Mốc Stress Test
+    // { duration: '1m',  target: 4000 },
+    // { duration: '1m',  target: 4000 },
+
+    // // Ramp-down giảm tải về 0
     { duration: '30s', target: 0 },
   ],
   thresholds: {
