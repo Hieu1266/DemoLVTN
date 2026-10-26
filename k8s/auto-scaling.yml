@@ -15,7 +15,7 @@ spec:
       name: cpu
       target:
         type: Utilization
-        averageUtilization: 55   # % so với requests.cpu của pod
+        averageUtilization: 70   # % so với requests.cpu của pod
   behavior:
     scaleUp:
       stabilizationWindowSeconds: 0      # tăng ngay khi vượt ngưỡng
@@ -47,7 +47,7 @@ spec:
       name: cpu
       target:
         type: Utilization
-        averageUtilization: 45   # % so với requests.cpu của pod
+        averageUtilization: 55   # % so với requests.cpu của pod
   behavior:
     scaleUp:
       stabilizationWindowSeconds: 0      # tăng ngay khi vượt ngưỡng
@@ -80,7 +80,7 @@ spec:
       name: cpu
       target:
         type: Utilization
-        averageUtilization: 60   # % so với requests.cpu của pod
+        averageUtilization: 70   # % so với requests.cpu của pod
   behavior:
     scaleUp:
       stabilizationWindowSeconds: 0      # tăng ngay khi vượt ngưỡng
