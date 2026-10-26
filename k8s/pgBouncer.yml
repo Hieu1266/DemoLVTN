@@ -35,8 +35,22 @@ data:
 
 ---
 # ==========================================
-# 2. PGBOUNCER DEPLOYMENT
-# ===================================c=======
+# 2. PGBOUNCER SECRET (Khắc phục lỗi mất dấu "")
+# ==========================================
+apiVersion: v1
+kind: Secret
+metadata:
+  name: pgbouncer-userlist
+  namespace: ssl
+type: Opaque
+stringData:
+  userlist.txt: |
+    "postgres" "B2305573"
+
+---
+# ==========================================
+# 3. PGBOUNCER DEPLOYMENT
+# ==========================================
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -46,6 +60,8 @@ metadata:
     app: pgbouncer
 spec:
   replicas: 1
+  strategy:
+    type: Recreate   # Giúp giải phóng RAM/CPU ngay lập tức khi rollout
   selector:
     matchLabels:
       app: pgbouncer
@@ -95,7 +111,7 @@ spec:
 
 ---
 # ==========================================
-# 3. PGBOUNCER SERVICE (ClusterIP)
+# 4. PGBOUNCER SERVICE (ClusterIP)
 # ==========================================
 apiVersion: v1
 kind: Service
