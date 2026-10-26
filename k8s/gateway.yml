@@ -9,7 +9,7 @@ metadata:
   labels:
     app: api-gateway
 spec:
-  replicas: 2 # Scale 2 pod gateway để chống single-point-of-failure
+  # Không khai báo replicas: số pod do HPA quản lý (min 2)
   selector:
     matchLabels:
       app: api-gateway
@@ -21,7 +21,7 @@ spec:
       containers:
       - name: api-gateway
         image: DOCKER_USER/ssl-api-gateway:latest
-        imagePullPolicy: Always
+        imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8088
         env:
@@ -39,16 +39,20 @@ spec:
             port: 8088
           initialDelaySeconds: 5
           periodSeconds: 5
+          timeoutSeconds: 5
+          failureThreshold: 6
         livenessProbe:
           httpGet:
             path: /health
             port: 8088
-          initialDelaySeconds: 10
+          initialDelaySeconds: 20
           periodSeconds: 15
+          timeoutSeconds: 5
+          failureThreshold: 8
         resources:
           requests:
             memory: "0.5Gi"
-            cpu: "900m"
+            cpu: "500m"
           limits:
             memory: "1Gi"
             cpu: "1800m"
