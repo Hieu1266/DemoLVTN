@@ -21,8 +21,8 @@ spec:
       stabilizationWindowSeconds: 0      # tăng ngay khi vượt ngưỡng
       policies:
       - type: Pods
-        value: 2
-        periodSeconds: 15                # mỗi 30 giây tăng tối đa 2 pod
+        value: 4
+        periodSeconds: 30                # mỗi 30 giây tăng tối đa 2 pod
     scaleDown:
       stabilizationWindowSeconds: 120    # tải giảm kéo dài 2 phút mới bớt pod
       policies:
@@ -53,8 +53,8 @@ spec:
       stabilizationWindowSeconds: 0      # tăng ngay khi vượt ngưỡng
       policies:
       - type: Pods
-        value: 2
-        periodSeconds: 15                # mỗi 30 giây tăng tối đa 2 pod
+        value: 4
+        periodSeconds: 30                # mỗi 30 giây tăng tối đa 2 pod
     scaleDown:
       stabilizationWindowSeconds: 120    # tải giảm kéo dài 2 phút mới bớt pod
       policies:
@@ -86,8 +86,8 @@ spec:
       stabilizationWindowSeconds: 0      # tăng ngay khi vượt ngưỡng
       policies:
       - type: Pods
-        value: 2
-        periodSeconds: 15                # mỗi 30 giây tăng tối đa 2 pod
+        value: 4
+        periodSeconds: 30                # mỗi 30 giây tăng tối đa 2 pod
     scaleDown:
       stabilizationWindowSeconds: 120    # tải giảm kéo dài 2 phút mới bớt pod
       policies:
@@ -120,8 +120,8 @@ spec:
       stabilizationWindowSeconds: 0      # tăng ngay khi vượt ngưỡng
       policies:
       - type: Pods
-        value: 2
-        periodSeconds: 15                # mỗi 30 giây tăng tối đa 2 pod
+        value: 4
+        periodSeconds: 30                # mỗi 30 giây tăng tối đa 2 pod
     scaleDown:
       stabilizationWindowSeconds: 120    # tải giảm kéo dài 2 phút mới bớt pod
       policies:
