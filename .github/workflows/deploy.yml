@@ -221,9 +221,6 @@ jobs:
 
 
 # 1. Tạo Secret kết nối DB & PgBouncer Userlist
-# 2.
-# 3.
-
       - name: Create backend secret and PgBouncer userlist
         shell: powershell
         env:
