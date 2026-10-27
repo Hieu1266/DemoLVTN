@@ -14,9 +14,9 @@ export const options = {
   // Cấu hình tăng tải từ nhẹ đến đỉnh điểm 1,000 VUs
   stages: [
   //   // Mốc 1 VU: Chạy 30s để lấy Baseline chuẩn
-    { duration: '30s', target: 1 },
+    // { duration: '30s', target: 1 },
 
-    // // Ramp-up lên 10 VUs (15s) và Giữ tải 10 VUs (30s)
+    // Ramp-up lên 10 VUs (15s) và Giữ tải 10 VUs (30s)
     // { duration: '15s', target: 10 },
     // { duration: '30s', target: 10 },
 
@@ -37,8 +37,8 @@ export const options = {
     // { duration: '1m',  target: 1000 },
 
     // // Ramp-up lên 4000 VUs (1m) và Giữ tải 4000 VUs (1m) - Mốc Stress Test
-    // { duration: '1m',  target: 4000 },
-    // { duration: '1m',  target: 4000 },
+    { duration: '1m',  target: 4000 },
+    { duration: '1m',  target: 4000 },
     // // Ramp-up lên 4000 VUs (1m) và Giữ tải 4000 VUs (1m) - Mốc Stress Test
     
     // { duration: '1m30s',  target: 10000 },
