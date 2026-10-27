@@ -41,8 +41,8 @@ spec:
           periodSeconds: 5
         resources:
           requests:
-            memory: "512Mi"
-            cpu: "250m"
+            memory: "128Mi"
+            cpu: "150m"
           limits:
             memory: "1Gi"
             cpu: "1000m"
@@ -106,10 +106,10 @@ spec:
         resources:
           requests:
             memory: "512Mi"
-            cpu: "250m"
+            cpu: "350m"
           limits:
             memory: "1Gi"
-            cpu: "1000m"
+            cpu: "1500m"
 ---
 apiVersion: v1
 kind: Service
