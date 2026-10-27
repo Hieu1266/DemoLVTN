@@ -37,8 +37,8 @@ export const options = {
     // { duration: '1m',  target: 1000 },
 
     // // Ramp-up lên 4000 VUs (1m) và Giữ tải 4000 VUs (1m) - Mốc Stress Test
-    { duration: '1m',  target: 4000 },
-    { duration: '1m',  target: 4000 },
+    // { duration: '1m',  target: 4000 },
+    // { duration: '1m',  target: 4000 },
     // // Ramp-up lên 4000 VUs (1m) và Giữ tải 4000 VUs (1m) - Mốc Stress Test
     
     { duration: '1m30s',  target: 10000 },
