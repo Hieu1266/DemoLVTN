@@ -38,11 +38,11 @@ spec:
             optional: true
         resources:
           requests:
-            memory: "512Mi"
-            cpu: "300m"
+            memory: "128Mi"
+            cpu: "100m"
           limits:
-            memory: "1Gi"
-            cpu: "1000m"
+            memory: "512Gi"
+            cpu: "500m"
         livenessProbe:
           httpGet:
             path: /
