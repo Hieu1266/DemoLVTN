@@ -1,3 +1,6 @@
+'use server';
+
+
 import { api, AUTH_URL } from "@/src/lib/api";
 import { clearSession, saveSession, type SessionUser } from "@/src/lib/session";
 import { cookies } from 'next/headers'
