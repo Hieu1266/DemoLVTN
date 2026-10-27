@@ -20,7 +20,7 @@ async function setAuthCookies(data: any) {
   const cookieConfig = {
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'lax' as const,
-    maxAge: 60 * 60 * 24,
+    maxAge: 60 * 60 * 72,
     path: '/',
   };
 
@@ -45,7 +45,7 @@ export async function login(email: string, password: string) {
     method: "POST",
     body: JSON.stringify({ email, password }),
   });
-  setAuthCookies(res);
+  await setAuthCookies(res);
   saveSession(res.access_token, res.user);
   return res.user;
 }
