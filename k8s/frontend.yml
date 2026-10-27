@@ -22,7 +22,7 @@ spec:
       containers:
       - name: frontend
         image: DOCKER_USER/ssl-frontend:latest
-        imagePullPolicy: Always
+        imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 3000
         env:
