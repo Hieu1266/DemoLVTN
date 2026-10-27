@@ -32,16 +32,16 @@ export const options = {
     // { duration: '30s', target: 50 },
 
     // // Ramp-up lên 100 VUs (15s) và Giữ tải 100 VUs (1m)
-    // { duration: '15s', target: 100 },
-    // { duration: '1m',  target: 100 },
+    { duration: '15s', target: 100 },
+    { duration: '1m',  target: 100 },
 
     // // Ramp-up lên 500 VUs (30s) và Giữ tải 500 VUs (1m)
-    // { duration: '30s', target: 500 },
-    // { duration: '1m',  target: 500 },
+    { duration: '30s', target: 500 },
+    { duration: '1m',  target: 500 },
 
     // // Ramp-up lên 1000 VUs (30s) và Giữ tải 1000 VUs (1m)
-    // { duration: '30s', target: 1000 },
-    // { duration: '1m',  target: 1000 },
+    { duration: '30s', target: 1000 },
+    { duration: '1m',  target: 1000 },
 
     // // Ramp-up lên 4000 VUs (1m) và Giữ tải 4000 VUs (1m) - Mốc Stress Test
     { duration: '1m',  target: 4000 },
