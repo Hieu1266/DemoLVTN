@@ -35,7 +35,7 @@ export default function RegisterPage() {
       void confirm;
       await register(data);
       const user = await login(form.email, form.password);
-      router.push(homeByRole(user.role));
+      router.push(homeByRole(user.user?.role));
     } catch (err) {
       setError(errMsg(err));
     } finally {

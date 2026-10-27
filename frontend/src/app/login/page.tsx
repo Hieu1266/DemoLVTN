@@ -24,7 +24,7 @@ export default function LoginPage() {
     setLoading(true);
     try {
       const user = await login(email, password);
-      router.push(homeByRole(user.role));
+      router.push(homeByRole(user.user?.role));
     } catch (err) {
       setError(errMsg(err));
     } finally {
