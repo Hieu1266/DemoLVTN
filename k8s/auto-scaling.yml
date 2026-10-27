@@ -107,7 +107,7 @@ spec:
     kind: Deployment
     name: api-gateway
   minReplicas: 2
-  maxReplicas: 10
+  maxReplicas: 30
   metrics:
   - type: Resource
     resource:
