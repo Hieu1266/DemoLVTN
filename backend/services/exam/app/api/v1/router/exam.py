@@ -137,19 +137,34 @@ def _get_users_map(db: Session, user_ids: List[UUID], auth_header: Optional[str]
 # 1. QUẢN LÝ ĐỀ THI (CRUD)
 # ===================================================================
 
+# ===================================================================
+# 1. QUẢN LÝ ĐỀ THI (CRUD)
+# ===================================================================
+
 @router.get("", response_model=None)
 @router.get("/")
 def get_all_exams(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    """Lấy danh sách tất cả đề thi."""
+    """Lấy danh sách đề thi (Tự động phân quyền: Admin thấy hết, Giảng viên chỉ thấy đề của mình)."""
+    user_id_str = current_user.get("user_id") or current_user.get("id") or current_user.get("sub")
+    role = str(current_user.get("role") or current_user.get("role_id") or "").upper()
+
+    # Nếu người dùng là Giảng viên (INSTRUCTOR), lọc danh sách theo user_id
+    if role == "INSTRUCTOR" and user_id_str:
+        try:
+            uid = UUID(str(user_id_str))
+            return crud_exam.get_instructor_exams(db, instructor_id=uid)
+        except (ValueError, TypeError):
+            pass
+
+    # Nếu là ADMIN hoặc trường hợp khác, lấy toàn bộ danh sách
     statement = select(Exam)
     if hasattr(Exam, "created_at"):
         statement = statement.order_by(Exam.created_at.desc())
     exams = db.exec(statement).all()
     return exams
-
 
 @router.post("", response_model=None)
 @router.post("/")

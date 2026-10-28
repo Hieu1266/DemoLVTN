@@ -48,6 +48,29 @@ class CRUDExam:
     def get_by_id(self, db: Session, exam_id: UUID) -> Optional[Exam]:
         return db.get(Exam, exam_id)
 
+
+    def get_instructor_exams(self, db: Session, instructor_id: UUID) -> List[Exam]:
+        """Lấy danh sách đề thi do chính Giảng viên đó tạo ra."""
+        from sqlmodel import or_
+        
+        conds = []
+        if hasattr(Exam, "created_by"):
+            conds.append(Exam.created_by == instructor_id)
+        if hasattr(Exam, "owner_id"):
+            conds.append(Exam.owner_id == instructor_id)
+        if hasattr(Exam, "user_id"):
+            conds.append(Exam.user_id == instructor_id)
+
+        statement = select(Exam)
+        if conds:
+            statement = statement.where(or_(*conds))
+            
+        if hasattr(Exam, "created_at"):
+            statement = statement.order_by(Exam.created_at.desc())
+            
+        return db.exec(statement).all()
+
+
     def get_by_access_code(self, db: Session, access_code: str) -> Optional[Exam]:
         clean_code = access_code.strip() if access_code else ""
         statement = select(Exam).where(Exam.access_code.ilike(clean_code))
