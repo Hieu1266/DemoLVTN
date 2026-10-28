@@ -39,14 +39,20 @@ async function setAuthCookies(data: TokenResponse) {
 }
 
 export async function register(data: RegisterData) {
-  return api<SessionUser>(getAuthApiUrl(), "/users/register", {
-    method: "POST",
-    body: JSON.stringify(data),
-    isPublic: true,
-  });
+  try {
+    const authUrl = getAuthApiUrl();
+    const res = await api<SessionUser>(authUrl, "/users/register", {
+      method: "POST",
+      body: JSON.stringify(data),
+      isPublic: true,
+    });
+    return { success: true, data: res };
+  } catch (err: any) {
+    const msg = err instanceof Error ? err.message : "Đăng ký thất bại!";
+    return { success: false, error: msg };
+  }
 }
 
-// 🔴 SỬA LỖI: Bọc try...catch để trả về Object kết quả mượt mà, không bao giờ bị throw 500
 export async function login(email: string, password: string) {
   try {
     const authUrl = getAuthApiUrl();
