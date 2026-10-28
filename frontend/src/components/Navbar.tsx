@@ -51,6 +51,11 @@ export default function Navbar() {
     return pathname === href || pathname.startsWith(href + "/");
   };
 
+  // Giá trị fallback an toàn chống lỗi TypeScript Build
+  const username = user?.username || "User";
+  const userRole = user?.role || "";
+  const initial = username.charAt(0).toUpperCase();
+
   return (
     <header className="sticky top-0 z-40 border-b border-gray-200/80 bg-white/70 backdrop-blur-lg dark:border-white/10 dark:bg-neutral-950/70">
       <nav className="mx-auto flex h-[72px] max-w-7xl items-center justify-between px-6 sm:px-8">
@@ -87,11 +92,13 @@ export default function Navbar() {
             <>
               <div className="flex items-center gap-2.5">
                 <span className="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500 to-violet-500 text-sm font-semibold text-white">
-                  {user.username.charAt(0).toUpperCase()}
+                  {initial}
                 </span>
                 <div className="hidden leading-tight sm:block">
-                  <p className="text-sm font-medium">{user.username}</p>
-                  <p className="text-xs opacity-60">{roleLabel[user.role] || user.role}</p>
+                  <p className="text-sm font-medium">{username}</p>
+                  <p className="text-xs opacity-60">
+                    {userRole ? (roleLabel[userRole] || userRole) : ""}
+                  </p>
                 </div>
               </div>
               <button
