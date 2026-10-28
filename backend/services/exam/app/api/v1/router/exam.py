@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, select
+from sqlalchemy import text
 
 from app.api.v1.deps import get_db, get_current_user
 from app.crud.crud_exam import crud_exam, parse_dt
@@ -12,8 +13,6 @@ from app.models.exam import Exam
 from app.models.attempt import Attempt
 from app.models.attempt_answer import AttemptAnswer
 from app.models.question import Question
-# ⚠️ Import Model User từ dự án của bạn (chỉnh lại đường dẫn nếu file user.py nằm vị trí khác)
-from app.models.user import User
 
 router = APIRouter()
 
@@ -146,7 +145,7 @@ def delete_exam_by_id(exam_id: UUID, db: Session = Depends(get_db)):
 
 
 # ===================================================================
-# 2. DANH SÁCH BÀI NỘP (CẬP NHẬT TRUY VẤN TÊN USER TỪ BẢNG USER)
+# 2. DANH SÁCH BÀI NỘP (QUERY TRỰC TIẾP BẢNG "user" BẰNG SQL TEXT)
 # ===================================================================
 
 @router.get("/{exam_id}/submissions")
@@ -155,7 +154,7 @@ def get_exam_submissions(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    """Lấy danh sách các bài thi đã nộp của sinh viên theo đề thi kèm thông tin Username/Email."""
+    """Lấy danh sách bài nộp kèm Username và Email sinh viên."""
     exam = crud_exam.get_by_id(db, exam_id)
     if not exam:
         raise HTTPException(status_code=404, detail="Không tìm thấy đề thi!")
@@ -167,18 +166,18 @@ def get_exam_submissions(
     )
     attempts = db.exec(statement).all()
 
-    # Truy vấn danh sách User tương ứng từ CSDL
-    user_ids = list({att.user_id for att in attempts if att.user_id})
+    # Query trực tiếp bảng "user" từ Postgres không qua ORM Model
+    user_ids = list({str(att.user_id) for att in attempts if att.user_id})
     user_map = {}
     if user_ids:
         try:
-            # Ưu tiên query theo user_id hoặc id
-            u_field = User.user_id if hasattr(User, "user_id") else User.id
-            users = db.exec(select(User).where(u_field.in_(user_ids))).all()
-            for u in users:
-                uid_val = getattr(u, "user_id", getattr(u, "id", None))
-                if uid_val:
-                    user_map[str(uid_val)] = u
+            sql = text('SELECT user_id::text, username, email FROM "user" WHERE user_id = ANY(:uids)')
+            rows = db.execute(sql, {"uids": user_ids}).fetchall()
+            for row in rows:
+                user_map[str(row[0])] = {
+                    "username": row[1],
+                    "email": row[2]
+                }
         except Exception:
             pass
 
@@ -189,14 +188,11 @@ def get_exam_submissions(
         submitted_time = _get_attr(att, ["completed_at", "submitted_at", "ended_at", "started_at"])
 
         short_uid = str(att.user_id)[:8]
-        usr = user_map.get(str(att.user_id))
+        u_info = user_map.get(str(att.user_id), {})
 
-        # Lấy thông tin thực tế từ Bảng User
-        username = _get_attr(usr, ["username", "user_name"], None)
-        email = _get_attr(usr, ["email", "student_email"], f"student_{short_uid}@lumer.edu.vn")
-        full_name = _get_attr(usr, ["full_name", "name"], None)
-
-        display_name = username or full_name or f"Sinh viên #{short_uid}"
+        username = u_info.get("username")
+        email = u_info.get("email") or f"student_{short_uid}@lumer.edu.vn"
+        display_name = username or f"Sinh viên #{short_uid}"
 
         score_num = float(score_val) if score_val is not None else 0.0
         max_num = float(max_val) if max_val is not None else 10.0
@@ -228,7 +224,7 @@ def get_exam_submissions(
 
 
 # ===================================================================
-# 3. CHI TIẾT 1 BÀI NỘP (CẬP NHẬT TRUY VẤN TÊN USER TỪ BẢNG USER)
+# 3. CHI TIẾT 1 BÀI NỘP
 # ===================================================================
 
 @router.get("/{exam_id}/submissions/{attempt_id}")
@@ -239,27 +235,28 @@ def get_submission_detail_for_grading(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    """Lấy chi tiết bài làm kèm câu hỏi và đáp án sinh viên để chấm bài."""
+    """Lấy chi tiết bài làm kèm câu hỏi và đáp án sinh viên."""
     attempt = crud_attempt.get_by_id(db, attempt_id)
     if not attempt:
         raise HTTPException(status_code=404, detail="Không tìm thấy bài làm thi!")
 
     exam = crud_exam.get_by_id(db, exam_id=attempt.exam_id)
 
-    # Truy vấn User từ CSDL
-    usr = None
+    # Lấy thông tin User từ Postgres bằng SQL direct
+    u_info = {}
     if attempt.user_id:
         try:
-            u_field = User.user_id if hasattr(User, "user_id") else User.id
-            usr = db.exec(select(User).where(u_field == attempt.user_id)).first()
+            sql = text('SELECT username, email FROM "user" WHERE user_id = :uid')
+            row = db.execute(sql, {"uid": str(attempt.user_id)}).fetchone()
+            if row:
+                u_info = {"username": row[0], "email": row[1]}
         except Exception:
             pass
 
     short_uid = str(attempt.user_id)[:8]
-    username = _get_attr(usr, ["username", "user_name"], None)
-    email = _get_attr(usr, ["email", "student_email"], f"student_{short_uid}@lumer.edu.vn")
-    full_name = _get_attr(usr, ["full_name", "name"], None)
-    display_name = username or full_name or f"Sinh viên #{short_uid}"
+    username = u_info.get("username")
+    email = u_info.get("email") or f"student_{short_uid}@lumer.edu.vn"
+    display_name = username or f"Sinh viên #{short_uid}"
 
     answers = db.exec(
         select(AttemptAnswer).where(AttemptAnswer.attempt_id == attempt_id)
