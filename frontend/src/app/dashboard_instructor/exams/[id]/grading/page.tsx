@@ -8,7 +8,7 @@ import { errMsg } from "@/src/lib/api";
 import { fmtDate } from "@/src/lib/ui";
 import type { SubmissionRow } from "@/src/types/exam";
 
-const PAGE_SIZE = 10; // Số lượng bài nộp trên 1 trang
+const PAGE_SIZE = 10; // Số lượng bài nộp hiển thị trên mỗi trang
 
 export default function GradingPage() {
   const { id } = useParams<{ id: string }>();
@@ -20,11 +20,14 @@ export default function GradingPage() {
   const [savingQId, setSavingQId] = useState<string | null>(null);
   const [error, setError] = useState("");
 
-  // State hỗ trợ Phân trang & Lọc
+  // State hỗ trợ Phân trang & Bộ lọc
   const [currentPage, setCurrentPage] = useState(1);
   const [statusFilter, setStatusFilter] = useState<"ALL" | "NEEDS_GRADING" | "DONE">("ALL");
 
-  // 1. Load danh sách tất cả bài nộp
+  // Helper lấy Attempt ID an toàn để tránh lỗi TypeScript TS2339
+  const getAttemptId = useCallback((r: any) => r?.attempt_id || r?.id || "", []);
+
+  // 1. Load danh sách bài nộp từ Server
   const loadSubmissions = useCallback(async () => {
     if (!id) return;
     try {
@@ -44,6 +47,7 @@ export default function GradingPage() {
 
   // 2. Mở Modal chấm bài chi tiết của 1 sinh viên
   async function openSubmission(attemptId: string) {
+    if (!attemptId) return;
     setError("");
     setLoadingDetail(true);
     try {
@@ -81,7 +85,7 @@ export default function GradingPage() {
   // 3. Lưu điểm tự luận
   async function saveGrade(questionId: string) {
     if (!detail) return;
-    const targetAttemptId = detail.attempt_id || detail.id;
+    const targetAttemptId = getAttemptId(detail);
     setSavingQId(questionId);
     try {
       const score = scores[questionId] ?? 0;
@@ -110,7 +114,7 @@ export default function GradingPage() {
     });
   }, [rows, statusFilter]);
 
-  // Lấy dữ liệu cho trang hiện tại
+  // Phân trang
   const totalPages = Math.ceil(filteredRows.length / PAGE_SIZE) || 1;
   const paginatedRows = useMemo(() => {
     const start = (currentPage - 1) * PAGE_SIZE;
@@ -119,20 +123,20 @@ export default function GradingPage() {
 
   // Chuyển sinh viên kế tiếp trực tiếp trong Modal
   const currentDetailIndex = filteredRows.findIndex(
-    (r: any) => (r.attempt_id || r.id) === (detail?.attempt_id || detail?.id)
+    (r: any) => getAttemptId(r) === getAttemptId(detail)
   );
 
   function nextStudent() {
     if (currentDetailIndex >= 0 && currentDetailIndex < filteredRows.length - 1) {
       const nextAttempt = filteredRows[currentDetailIndex + 1];
-      openSubmission(nextAttempt.attempt_id || nextAttempt.id);
+      openSubmission(getAttemptId(nextAttempt));
     }
   }
 
   function prevStudent() {
     if (currentDetailIndex > 0) {
       const prevAttempt = filteredRows[currentDetailIndex - 1];
-      openSubmission(prevAttempt.attempt_id || prevAttempt.id);
+      openSubmission(getAttemptId(prevAttempt));
     }
   }
 
@@ -169,7 +173,7 @@ export default function GradingPage() {
         <div>
           <Link
             href={`/dashboard_instructor/exams/${id}`}
-            className="text-xs font-bold text-indigo-600 hover:underline"
+            className="text-xs font-bold text-indigo-600 hover:underline inline-flex items-center gap-1"
           >
             ← Chi tiết đề thi
           </Link>
@@ -178,13 +182,13 @@ export default function GradingPage() {
           </h1>
         </div>
 
-        {/* BỘ LỌC BÀI NỘP */}
+        {/* BỘ LỌC TRẠNG THÁI */}
         <div className="flex items-center gap-2">
           <button
             onClick={() => { setStatusFilter("ALL"); setCurrentPage(1); }}
-            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition ${
+            className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition ${
               statusFilter === "ALL"
-                ? "bg-indigo-600 text-white"
+                ? "bg-indigo-600 text-white shadow-xs"
                 : "bg-slate-100 text-slate-600 hover:bg-slate-200"
             }`}
           >
@@ -192,9 +196,9 @@ export default function GradingPage() {
           </button>
           <button
             onClick={() => { setStatusFilter("NEEDS_GRADING"); setCurrentPage(1); }}
-            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition ${
+            className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition ${
               statusFilter === "NEEDS_GRADING"
-                ? "bg-amber-500 text-white"
+                ? "bg-amber-500 text-white shadow-xs"
                 : "bg-slate-100 text-slate-600 hover:bg-slate-200"
             }`}
           >
@@ -202,13 +206,13 @@ export default function GradingPage() {
           </button>
           <button
             onClick={() => { setStatusFilter("DONE"); setCurrentPage(1); }}
-            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition ${
+            className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition ${
               statusFilter === "DONE"
-                ? "bg-emerald-600 text-white"
+                ? "bg-emerald-600 text-white shadow-xs"
                 : "bg-slate-100 text-slate-600 hover:bg-slate-200"
             }`}
           >
-            Đã chấm xong
+            Đã hoàn thành
           </button>
         </div>
       </div>
@@ -219,22 +223,22 @@ export default function GradingPage() {
         </div>
       )}
 
-      {/* DANH SÁCH BÀI NỘP DẠNG BẢNG GỌN GÀNG */}
-      <div className="rounded-3xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+      {/* DANH SÁCH BÀI NỘP DẠNG BẢNG CÓ PHÂN TRANG */}
+      <div className="rounded-3xl border border-slate-200 bg-white shadow-xs overflow-hidden">
         {loading ? (
           <div className="py-16 text-center text-xs font-bold text-slate-400">
             Đang tải danh sách bài nộp...
           </div>
         ) : filteredRows.length === 0 ? (
           <div className="py-16 text-center text-xs text-slate-400">
-            Không tìm thấy bài nộp phù hợp.
+            Không tìm thấy bài nộp nào phù hợp.
           </div>
         ) : (
           <>
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse">
                 <thead>
-                  <tr className="border-b border-slate-100 bg-slate-50 text-[11px] font-black uppercase tracking-wider text-slate-500">
+                  <tr className="border-b border-slate-100 bg-slate-50/80 text-[11px] font-black uppercase tracking-wider text-slate-400">
                     <th className="py-3.5 px-4">Sinh viên</th>
                     <th className="py-3.5 px-4">Thời gian nộp</th>
                     <th className="py-3.5 px-4">Điểm số</th>
@@ -262,7 +266,7 @@ export default function GradingPage() {
                       r.needs_grading ||
                       r.status === "SUBMITTED";
 
-                    const currentAttemptId = r.attempt_id || r.id;
+                    const currentAttemptId = getAttemptId(r);
 
                     return (
                       <tr key={currentAttemptId} className="hover:bg-indigo-50/30 transition">
@@ -302,7 +306,7 @@ export default function GradingPage() {
               </table>
             </div>
 
-            {/* THANH PHÂN TRANG (PAGINATION BAR) */}
+            {/* BAR PHÂN TRANG */}
             <div className="flex items-center justify-between px-6 py-4 border-t border-slate-100 bg-slate-50/50">
               <span className="text-xs font-medium text-slate-500">
                 Hiển thị {Math.min((currentPage - 1) * PAGE_SIZE + 1, filteredRows.length)} -{" "}
@@ -313,7 +317,7 @@ export default function GradingPage() {
                 <button
                   disabled={currentPage === 1}
                   onClick={() => setCurrentPage((p) => p - 1)}
-                  className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-40 transition"
+                  className="rounded-xl border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-40 transition"
                 >
                   ← Trang trước
                 </button>
@@ -323,7 +327,7 @@ export default function GradingPage() {
                 <button
                   disabled={currentPage === totalPages}
                   onClick={() => setCurrentPage((p) => p + 1)}
-                  className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-40 transition"
+                  className="rounded-xl border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-40 transition"
                 >
                   Trang sau →
                 </button>
@@ -333,9 +337,9 @@ export default function GradingPage() {
         )}
       </div>
 
-      {/* MODAL / SLIDE-OVER DRAWER CHẤM BÀI CHI TIẾT (FIX NỔI TRÊN MỌI LAYOUT) */}
+      {/* MODAL CHẤM BÀI TRƯỢT NỔI NỔI TRÊN MÀN HÌNH */}
       {(detail || loadingDetail) && (
-        <div className="fixed inset-0 z-50 flex items-center justify-end bg-slate-900/60 backdrop-blur-xs p-2 sm:p-4 animate-fadeIn">
+        <div className="fixed inset-0 z-50 flex items-center justify-end bg-slate-900/60 backdrop-blur-xs p-2 sm:p-4">
           <div className="relative flex flex-col h-full w-full max-w-3xl bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden">
             
             {/* MODAL HEADER */}
@@ -356,7 +360,7 @@ export default function GradingPage() {
                     <button
                       disabled={currentDetailIndex <= 0}
                       onClick={prevStudent}
-                      className="rounded-lg p-1.5 hover:bg-slate-200 disabled:opacity-30 text-xs font-bold text-slate-600"
+                      className="rounded-lg px-2.5 py-1.5 bg-white border border-slate-200 hover:bg-slate-100 disabled:opacity-30 text-xs font-bold text-slate-700 transition"
                       title="Bài trước"
                     >
                       ▲ Bài trước
@@ -364,7 +368,7 @@ export default function GradingPage() {
                     <button
                       disabled={currentDetailIndex >= filteredRows.length - 1}
                       onClick={nextStudent}
-                      className="rounded-lg p-1.5 hover:bg-slate-200 disabled:opacity-30 text-xs font-bold text-slate-600"
+                      className="rounded-lg px-2.5 py-1.5 bg-white border border-slate-200 hover:bg-slate-100 disabled:opacity-30 text-xs font-bold text-slate-700 transition"
                       title="Bài kế tiếp"
                     >
                       ▼ Bài kế
@@ -372,17 +376,16 @@ export default function GradingPage() {
                   </div>
                 )}
 
-                {/* NÚT ĐÓNG MODAL */}
                 <button
                   onClick={() => setDetail(null)}
-                  className="rounded-full bg-slate-200/80 p-2 text-slate-600 hover:bg-slate-300 transition font-black text-sm w-8 h-8 flex items-center justify-center"
+                  className="rounded-full bg-slate-200/80 p-2 text-slate-600 hover:bg-slate-300 transition font-black text-xs w-8 h-8 flex items-center justify-center"
                 >
                   ✕
                 </button>
               </div>
             </div>
 
-            {/* MODAL BODY (CUỘN NỘI DUNG ĐỘC LẬP) */}
+            {/* MODAL BODY CUỘN ĐỘC LẬP */}
             <div className="flex-1 overflow-y-auto p-6 space-y-6">
               {loadingDetail ? (
                 <div className="py-20 text-center text-xs font-bold text-slate-400">
@@ -488,7 +491,7 @@ export default function GradingPage() {
                               </div>
                             )}
 
-                            {/* KHUNG BẬT Ô NHẬP ĐIỂM TỰ LUẬN */}
+                            {/* CHẤM ĐIỂM TỰ LUẬN */}
                             {isEssay ? (
                               <div className="flex items-center justify-between gap-3 pt-2 border-t border-slate-200/60">
                                 <div className="flex items-center gap-2">
