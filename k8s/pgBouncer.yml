@@ -73,7 +73,7 @@ spec:
       containers:
       - name: pgbouncer
         image: edoburu/pgbouncer:latest
-        imagePullPolicy: IfNotPresent
+        imagePullPolicy: Always
         ports:
         - containerPort: 6432
         volumeMounts:

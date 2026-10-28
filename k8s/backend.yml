@@ -20,7 +20,7 @@ spec:
       containers:
       - name: auth-service
         image: DOCKER_USER/ssl-auth-service:latest
-        imagePullPolicy: IfNotPresent
+        imagePullPolicy: Always
         ports:
         - containerPort: 8000
         env:
@@ -84,7 +84,7 @@ spec:
       containers:
       - name: exam-service
         image: DOCKER_USER/ssl-exam-service:latest
-        imagePullPolicy: IfNotPresent
+        imagePullPolicy: Always
         ports:
         - containerPort: 8001
         env:

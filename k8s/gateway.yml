@@ -21,7 +21,7 @@ spec:
       containers:
       - name: api-gateway
         image: DOCKER_USER/ssl-api-gateway:latest
-        imagePullPolicy: IfNotPresent
+        imagePullPolicy: Always
         ports:
         - containerPort: 8088
         env:
