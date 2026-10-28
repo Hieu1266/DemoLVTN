@@ -12,6 +12,8 @@ from app.models.exam import Exam
 from app.models.attempt import Attempt
 from app.models.attempt_answer import AttemptAnswer
 from app.models.question import Question
+# ⚠️ Import Model User từ dự án của bạn (chỉnh lại đường dẫn nếu file user.py nằm vị trí khác)
+from app.models.user import User
 
 router = APIRouter()
 
@@ -84,10 +86,6 @@ def get_exam_by_id(
     return exam_dict
 
 
-# ===================================================================
-# [BỔ SUNG MỚI] CẬP NHẬT & XÓA ĐỀ THI (SỬA LỖI 405 METHOD NOT ALLOWED)
-# ===================================================================
-
 @router.put("/{exam_id}")
 @router.patch("/{exam_id}")
 def update_exam_by_id(
@@ -96,22 +94,17 @@ def update_exam_by_id(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    """
-    Cập nhật thông tin đề thi & chuyển đổi trạng thái (DRAFT / PUBLISHED / CLOSED).
-    Hỗ trợ cả PUT và PATCH từ Frontend.
-    """
+    """Cập nhật thông tin đề thi."""
     exam = crud_exam.get_by_id(db, exam_id)
     if not exam:
         raise HTTPException(status_code=404, detail="Không tìm thấy đề thi để cập nhật!")
 
-    # Cập nhật linh hoạt các trường trong model Exam
     for key, value in payload.items():
         if hasattr(exam, key):
             if key in ("start_at", "end_at"):
-                value = parse_dt(value)  # chuỗi ISO từ frontend -> datetime
+                value = parse_dt(value)
             setattr(exam, key, value)
             
-    # Cập nhật thời gian chỉnh sửa
     if hasattr(exam, "updated_at"):
         setattr(exam, "updated_at", datetime.now(timezone.utc))
 
@@ -120,17 +113,9 @@ def update_exam_by_id(
     db.refresh(exam)
     return exam
 
-from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlmodel import Session, select
-
-# ⚠️ LƯU Ý: Đảm bảo import đúng đường dẫn tới model Attempt và Exam của bạn
-from app.models.exam import Exam
-from app.models.attempt import Attempt  # Chỉnh lại đường dẫn nếu file attempt.py nằm chỗ khác
 
 @router.delete("/{exam_id}")
 def delete_exam_by_id(exam_id: UUID, db: Session = Depends(get_db)):
-    # 1. Tìm đề thi trong CSDL
     exam = db.get(Exam, exam_id)
     if not exam:
         raise HTTPException(
@@ -138,14 +123,12 @@ def delete_exam_by_id(exam_id: UUID, db: Session = Depends(get_db)):
             detail="Không tìm thấy đề thi."
         )
 
-    # 2. KIỂM TRA TRƯỚC: Nếu đề thi đã PUBLISHED hoặc CLOSED -> Chặn ngay
     if hasattr(exam, "status") and exam.status in ["PUBLISHED", "CLOSED"]:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Đề thi đã được triển khai hoặc đã đóng. Vui lòng không xóa!"
         )
 
-    # 3. KIỂM TRA TRƯỚC: Xem đã có sinh viên tạo bài làm (Attempt) nào chưa
     has_attempt = db.exec(
         select(Attempt).where(Attempt.exam_id == exam_id)
     ).first()
@@ -156,14 +139,14 @@ def delete_exam_by_id(exam_id: UUID, db: Session = Depends(get_db)):
             detail="Đề thi đã có sinh viên làm bài, không thể xóa để bảo toàn dữ liệu!"
         )
 
-    # 4. CHỈ XÓA KHI ĐÃ QUA ĐƯỢC TẤT CẢ CÁC BƯỚC KIỂM TRA TRÊN
     db.delete(exam)
     db.commit()
 
     return {"message": "Xóa đề thi thành công."}
 
+
 # ===================================================================
-# 2. DANH SÁCH BÀI NỘP CỦA SINH VIÊN (SUBMISSIONS LIST)
+# 2. DANH SÁCH BÀI NỘP (CẬP NHẬT TRUY VẤN TÊN USER TỪ BẢNG USER)
 # ===================================================================
 
 @router.get("/{exam_id}/submissions")
@@ -172,7 +155,7 @@ def get_exam_submissions(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    """Lấy danh sách các bài thi đã nộp của sinh viên theo đề thi."""
+    """Lấy danh sách các bài thi đã nộp của sinh viên theo đề thi kèm thông tin Username/Email."""
     exam = crud_exam.get_by_id(db, exam_id)
     if not exam:
         raise HTTPException(status_code=404, detail="Không tìm thấy đề thi!")
@@ -184,6 +167,21 @@ def get_exam_submissions(
     )
     attempts = db.exec(statement).all()
 
+    # Truy vấn danh sách User tương ứng từ CSDL
+    user_ids = list({att.user_id for att in attempts if att.user_id})
+    user_map = {}
+    if user_ids:
+        try:
+            # Ưu tiên query theo user_id hoặc id
+            u_field = User.user_id if hasattr(User, "user_id") else User.id
+            users = db.exec(select(User).where(u_field.in_(user_ids))).all()
+            for u in users:
+                uid_val = getattr(u, "user_id", getattr(u, "id", None))
+                if uid_val:
+                    user_map[str(uid_val)] = u
+        except Exception:
+            pass
+
     submissions = []
     for att in attempts:
         score_val = _get_attr(att, ["score", "total_score", "earned_score"], 0.0)
@@ -191,7 +189,15 @@ def get_exam_submissions(
         submitted_time = _get_attr(att, ["completed_at", "submitted_at", "ended_at", "started_at"])
 
         short_uid = str(att.user_id)[:8]
-        student_name = f"Sinh viên #{short_uid}"
+        usr = user_map.get(str(att.user_id))
+
+        # Lấy thông tin thực tế từ Bảng User
+        username = _get_attr(usr, ["username", "user_name"], None)
+        email = _get_attr(usr, ["email", "student_email"], f"student_{short_uid}@lumer.edu.vn")
+        full_name = _get_attr(usr, ["full_name", "name"], None)
+
+        display_name = username or full_name or f"Sinh viên #{short_uid}"
+
         score_num = float(score_val) if score_val is not None else 0.0
         max_num = float(max_val) if max_val is not None else 10.0
 
@@ -201,10 +207,12 @@ def get_exam_submissions(
             "exam_id": str(att.exam_id),
             "user_id": str(att.user_id),
             "student_id": str(att.user_id),
-            "student_name": student_name,
-            "full_name": student_name,
-            "name": student_name,
-            "student_email": f"student_{short_uid}@lumer.edu.vn",
+            "username": username or display_name,
+            "student_name": display_name,
+            "full_name": display_name,
+            "name": display_name,
+            "student_email": email,
+            "email": email,
             "score": score_num,
             "total_score": score_num,
             "earned_score": score_num,
@@ -220,7 +228,7 @@ def get_exam_submissions(
 
 
 # ===================================================================
-# 3. CHI TIẾT 1 BÀI NỘP ĐỂ GIẢNG VIÊN CHẤM TAY (CHI TIẾT CÂU HỎI & BÀI LÀM)
+# 3. CHI TIẾT 1 BÀI NỘP (CẬP NHẬT TRUY VẤN TÊN USER TỪ BẢNG USER)
 # ===================================================================
 
 @router.get("/{exam_id}/submissions/{attempt_id}")
@@ -237,6 +245,22 @@ def get_submission_detail_for_grading(
         raise HTTPException(status_code=404, detail="Không tìm thấy bài làm thi!")
 
     exam = crud_exam.get_by_id(db, exam_id=attempt.exam_id)
+
+    # Truy vấn User từ CSDL
+    usr = None
+    if attempt.user_id:
+        try:
+            u_field = User.user_id if hasattr(User, "user_id") else User.id
+            usr = db.exec(select(User).where(u_field == attempt.user_id)).first()
+        except Exception:
+            pass
+
+    short_uid = str(attempt.user_id)[:8]
+    username = _get_attr(usr, ["username", "user_name"], None)
+    email = _get_attr(usr, ["email", "student_email"], f"student_{short_uid}@lumer.edu.vn")
+    full_name = _get_attr(usr, ["full_name", "name"], None)
+    display_name = username or full_name or f"Sinh viên #{short_uid}"
+
     answers = db.exec(
         select(AttemptAnswer).where(AttemptAnswer.attempt_id == attempt_id)
     ).all()
@@ -299,8 +323,6 @@ def get_submission_detail_for_grading(
     max_val = _get_attr(attempt, ["total_points", "max_score", "max_points"], 10.0)
     submitted_time = _get_attr(attempt, ["completed_at", "submitted_at", "ended_at", "started_at"])
 
-    short_uid = str(attempt.user_id)[:8]
-    student_name = f"Sinh viên #{short_uid}"
     score_num = float(score_val) if score_val is not None else 0.0
     max_num = float(max_val) if max_val is not None else 10.0
 
@@ -309,15 +331,19 @@ def get_submission_detail_for_grading(
         "attempt_id": str(attempt.attempt_id),
         "exam_id": str(attempt.exam_id),
         "exam_name": exam.exam_name if exam else "Bài thi",
-        "student_name": student_name,
-        "full_name": student_name,
-        "name": student_name,
-        "student_email": f"student_{short_uid}@lumer.edu.vn",
+        "username": username or display_name,
+        "student_name": display_name,
+        "full_name": display_name,
+        "name": display_name,
+        "student_email": email,
+        "email": email,
         "user_id": str(attempt.user_id),
         "student": {
             "id": str(attempt.user_id),
-            "full_name": student_name,
-            "name": student_name,
+            "username": username or display_name,
+            "full_name": display_name,
+            "name": display_name,
+            "email": email,
         },
         "score": score_num,
         "total_score": score_num,
