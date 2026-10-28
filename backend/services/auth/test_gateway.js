@@ -21,7 +21,7 @@ const users = new SharedArray('users_data', function () {
 export const options = {
   stages: [
     // Mốc 1 VU: Chạy 30s để lấy Baseline chuẩn
-    // { duration: '30s', target: 1 },
+    { duration: '30s', target: 1 },
 
     // // Ramp-up lên 10 VUs (15s) và Giữ tải 10 VUs (30s)
     // { duration: '15s', target: 10 },
@@ -43,12 +43,12 @@ export const options = {
     // { duration: '30s', target: 1000 },
     // { duration: '1m',  target: 1000 },
 
-    { duration: '30s', target: 4000 },
-    { duration: '1m',  target: 4000 },
+    // { duration: '30s', target: 4000 },
+    // { duration: '1m',  target: 4000 },
 
     // // Ramp-up lên 4000 VUs (1m) và Giữ tải 4000 VUs (1m) - Mốc Stress Test
-    // { duration: '1m',  target: 20000 },
-    // { duration: '1m',  target: 20000 },
+    { duration: '1m',  target: 20000 },
+    { duration: '1m',  target: 20000 },
 
     // // Ramp-down giảm tải về 0
     { duration: '30s', target: 0 },
