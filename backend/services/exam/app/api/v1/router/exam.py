@@ -145,7 +145,7 @@ def delete_exam_by_id(exam_id: UUID, db: Session = Depends(get_db)):
 
 
 # ===================================================================
-# 2. DANH SÁCH BÀI NỘP (QUERY TRỰC TIẾP BẢNG "user" BẰNG SQL TEXT)
+# 2. DANH SÁCH BÀI NỘP (TỰ ĐỘNG LẤY USERNAME & EMAIL TỪ BẢNG "user")
 # ===================================================================
 
 @router.get("/{exam_id}/submissions")
@@ -154,7 +154,7 @@ def get_exam_submissions(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    """Lấy danh sách bài nộp kèm Username và Email sinh viên."""
+    """Lấy danh sách các bài thi đã nộp kèm thông tin Username/Email."""
     exam = crud_exam.get_by_id(db, exam_id)
     if not exam:
         raise HTTPException(status_code=404, detail="Không tìm thấy đề thi!")
@@ -166,12 +166,14 @@ def get_exam_submissions(
     )
     attempts = db.exec(statement).all()
 
-    # Query trực tiếp bảng "user" từ Postgres không qua ORM Model
+    # Lấy danh sách user_id dạng string
     user_ids = list({str(att.user_id) for att in attempts if att.user_id})
     user_map = {}
+
     if user_ids:
         try:
-            sql = text('SELECT user_id::text, username, email FROM "user" WHERE user_id = ANY(:uids)')
+            # Query an toàn 100% bằng IN + bindparams + ::text casting
+            sql = text('SELECT user_id::text, username, email FROM "user" WHERE user_id::text IN :uids').bindparams(expanding=True)
             rows = db.execute(sql, {"uids": user_ids}).fetchall()
             for row in rows:
                 user_map[str(row[0])] = {
@@ -179,7 +181,7 @@ def get_exam_submissions(
                     "email": row[2]
                 }
         except Exception:
-            pass
+            db.rollback()  # Khôi phục Session nếu có sự cố SQL
 
     submissions = []
     for att in attempts:
@@ -224,7 +226,7 @@ def get_exam_submissions(
 
 
 # ===================================================================
-# 3. CHI TIẾT 1 BÀI NỘP
+# 3. CHI TIẾT 1 BÀI NỘP DÙNG ĐỂ CHẤM BÀI
 # ===================================================================
 
 @router.get("/{exam_id}/submissions/{attempt_id}")
@@ -242,16 +244,16 @@ def get_submission_detail_for_grading(
 
     exam = crud_exam.get_by_id(db, exam_id=attempt.exam_id)
 
-    # Lấy thông tin User từ Postgres bằng SQL direct
+    # Lấy thông tin User an toàn bằng SQL direct
     u_info = {}
     if attempt.user_id:
         try:
-            sql = text('SELECT username, email FROM "user" WHERE user_id = :uid')
+            sql = text('SELECT username, email FROM "user" WHERE user_id::text = :uid')
             row = db.execute(sql, {"uid": str(attempt.user_id)}).fetchone()
             if row:
                 u_info = {"username": row[0], "email": row[1]}
         except Exception:
-            pass
+            db.rollback()  # Khôi phục Session nếu có sự cố SQL
 
     short_uid = str(attempt.user_id)[:8]
     username = u_info.get("username")
