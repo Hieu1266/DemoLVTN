@@ -5,6 +5,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: frontend
+  namespace: ssl
   labels:
     app: frontend
     tier: frontend
@@ -32,6 +33,17 @@ spec:
           value: "3000"
         - name: CONFIG_SERVICE_URL
           value: "http://config-service:8005"
+        
+        # 🔴 BIẾN MÔI TRƯỜNG KẾT NỐI API TRONG K8S POD & BROWSER
+        - name: INTERNAL_AUTH_API_URL
+          value: "http://api-gateway:8080/api/v1"
+        - name: INTERNAL_EXAM_API_URL
+          value: "http://api-gateway:8080/api/v1"
+        - name: NEXT_PUBLIC_AUTH_API_URL
+          value: "http://localhost:31000/api/v1"
+        - name: NEXT_PUBLIC_EXAM_API_URL
+          value: "http://localhost:31000/api/v1"
+
         envFrom:
         - configMapRef:
             name: frontend-config
@@ -41,7 +53,7 @@ spec:
             memory: "256Mi"
             cpu: "100m"
           limits:
-            memory: "512Gi"
+            memory: "512Mi" # 👈 Đã sửa lỗi typo từ 512Gi thành 512Mi
             cpu: "500m"
         livenessProbe:
           httpGet:
@@ -63,6 +75,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: frontend
+  namespace: ssl
 spec:
   type: NodePort
   ports:
