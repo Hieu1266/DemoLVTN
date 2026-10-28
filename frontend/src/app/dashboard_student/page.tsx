@@ -139,7 +139,7 @@ export default function StudentDashboard() {
       </div>
 
       {/* --- 3. LỊCH SỬ BÀI THI GẦN ĐÂY (TỐI ƯU TOÀN DIỆN) --- */}
-      <div className="space-y-3">
+      {/* <div className="space-y-3">
         <div className="flex items-center justify-between">
           <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
             <HistoryIcon className="h-4 w-4 text-indigo-600" />
@@ -189,7 +189,7 @@ export default function StudentDashboard() {
             </div>
           ))}
         </div>
-      </div>
+      </div> */}
 
       {/* --- 4. KHỐI LƯU Ý KHI LÀM BÀI --- */}
       <div className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-2xs space-y-3">

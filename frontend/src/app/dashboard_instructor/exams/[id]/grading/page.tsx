@@ -53,23 +53,26 @@ export default function GradingListPage() {
 
       if (!matchStatus) return false;
 
-      // 2. Tìm kiếm theo Tên, Email hoặc ID sinh viên
+      // 2. Tìm kiếm theo Username, Tên, Email hoặc ID sinh viên
       if (!searchQuery.trim()) return true;
       const query = searchQuery.toLowerCase().trim();
 
       const nameCandidate = (
+        r.username ||
         r.student_name ||
         r.full_name ||
         r.name ||
+        r.user?.username ||
         r.user?.full_name ||
         r.user?.name ||
+        r.student?.username ||
         r.student?.full_name ||
         r.student?.name ||
         r.student_email ||
         r.email ||
         r.user?.email ||
-        r.user_id ||
         r.student_id ||
+        r.user_id ||
         ""
       ).toString().toLowerCase();
 
@@ -191,19 +194,25 @@ export default function GradingListPage() {
                 </thead>
                 <tbody className="divide-y divide-slate-100 text-xs">
                   {paginatedRows.map((r: any) => {
-                    // Tự động quét mở rộng tất cả alias trường tên/email có thể có từ API Backend
+                    // Tự động quét đầy đủ ưu tiên username -> full_name -> ID
                     const studentName =
+                      r.username ||
                       r.student_name ||
                       r.full_name ||
                       r.name ||
+                      r.user?.username ||
                       r.user?.full_name ||
                       r.user?.name ||
+                      r.student?.username ||
                       r.student?.full_name ||
                       r.student?.name ||
                       r.student_email ||
                       r.email ||
                       r.user?.email ||
-                      (r.user_id ? `Sinh viên #${String(r.user_id).slice(0, 8)}` : "Sinh viên");
+                      (r.student_id ? `Sinh viên #${String(r.student_id).slice(0, 8)}` : 
+                       r.user_id ? `Sinh viên #${String(r.user_id).slice(0, 8)}` : "Sinh viên");
+
+                    const displayId = r.student_id || r.user_id;
 
                     const scoreVal = r.score ?? r.earned_score ?? r.total_score;
                     const maxVal = r.max_score ?? r.total_points ?? 10;
@@ -223,9 +232,9 @@ export default function GradingListPage() {
                       <tr key={attemptId} className="hover:bg-indigo-50/30 transition">
                         <td className="py-3.5 px-4">
                           <span className="font-bold text-slate-900 block">{studentName}</span>
-                          {r.user_id && (
-                            <span className="text-[10px] text-slate-400 font-medium">
-                              ID: {r.user_id}
+                          {displayId && (
+                            <span className="text-[10px] text-slate-400 font-medium block">
+                              ID: {displayId}
                             </span>
                           )}
                         </td>

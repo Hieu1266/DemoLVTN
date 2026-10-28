@@ -6,21 +6,32 @@ from app.models.exam import Exam
 from app.models.question import Question
 
 
-def parse_dt(value: Any) -> Optional[datetime]:
-    """Đổi chuỗi ISO (vd '2026-10-24T12:24:00.000Z') thành datetime có múi giờ.
+from datetime import datetime, timezone
 
-    Frontend gửi start_at/end_at dạng chuỗi; cột TIMESTAMP WITH TIME ZONE của SQLModel
-    bắt buộc nhận datetime, nếu đưa chuỗi sẽ lỗi 'str' object has no attribute 'utcoffset'.
+def parse_dt(value: Any) -> Optional[datetime]:
+    """
+    Đổi chuỗi ISO thành datetime UTC chuẩn.
+    Nếu chuỗi không chứa múi giờ (naive), tự động gán múi giờ địa phương (UTC+7)
+    trước khi đổi sang UTC để tránh lệch 7 tiếng.
     """
     if value is None or value == "":
         return None
+        
     if isinstance(value, datetime):
         dt = value
     else:
-        dt = datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
+        val_str = str(value).strip()
+        if val_str.endswith("Z"):
+            val_str = val_str[:-1] + "+00:00"
+        dt = datetime.fromisoformat(val_str)
+
+    # 🔴 SỬA LỖI: Nếu chuỗi gửi từ Frontend chưa có Múi giờ, coi đó là giờ Local (Việt Nam UTC+7)
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt
+        local_tz = datetime.now().astimezone().tzinfo
+        dt = dt.replace(tzinfo=local_tz)
+
+    # Đưa về UTC chuẩn để lưu trữ DB và so sánh nhất quán
+    return dt.astimezone(timezone.utc)
 
 
 def _set_model_field(obj: Any, candidates: List[str], value: Any) -> Optional[str]:
@@ -94,19 +105,36 @@ class CRUDExam:
             except (ValueError, TypeError):
                 continue
 
-        # 3. XỬ LÝ CÂU HỎI SOẠN TRỰC TIẾP (INLINE_QUESTIONS) KÈM OWNER_ID
+        # 3. XỬ LÝ CÂU HỎI SOẠN TRỰC TIẾP (INLINE_QUESTIONS): LƯU ĐỒNG THỜI VÀO NGÂN HÀNG & ĐỀ THI
         inline_questions = data.get("inline_questions", [])
         for inline_q in inline_questions:
             q_dict = inline_q.model_dump() if hasattr(inline_q, "model_dump") else dict(inline_q)
-            new_q = Question(
-                exam_id=db_exam.exam_id,
-                question_type=q_dict.get("question_type", "single_choice"),
-                content=q_dict.get("content", ""),
-                points=float(q_dict.get("points", 1.0)),
-                data=q_dict.get("data", {})
+            q_type = q_dict.get("question_type", "single_choice")
+            q_content = q_dict.get("content", "")
+            q_pts = float(q_dict.get("points", 1.0))
+            q_data = q_dict.get("data", {})
+
+            # 3a. Lưu 1 bản vào Ngân hàng câu hỏi (exam_id = None)
+            bank_q = Question(
+                exam_id=None,
+                question_type=q_type,
+                content=q_content,
+                points=q_pts,
+                data=q_data
             )
-            _set_model_field(new_q, ["owner_id", "user_id", "created_by"], final_owner_id)
-            db.add(new_q)
+            _set_model_field(bank_q, ["owner_id", "user_id", "created_by"], final_owner_id)
+            db.add(bank_q)
+
+            # 3b. Gắn 1 bản sao trực tiếp vào Đề thi này (exam_id = db_exam.exam_id)
+            exam_q = Question(
+                exam_id=db_exam.exam_id,
+                question_type=q_type,
+                content=q_content,
+                points=q_pts,
+                data=q_data
+            )
+            _set_model_field(exam_q, ["owner_id", "user_id", "created_by"], final_owner_id)
+            db.add(exam_q)
 
         db.commit()
         db.refresh(db_exam)

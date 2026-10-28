@@ -8,7 +8,7 @@ import { errMsg } from "@/src/lib/api";
 import { Question } from "@/src/types/exam";
 import BankQuestionModal from "@/src/components/BankQuestionSelectModal";
 
-// Hàm sinh mã PIN ngẫu nhiên 6 ký tự (Không chứa 0, O, 1, I)
+// Hàm sinh mã PIN ngẫu nhiên 6 ký tự
 function generateRandomAccessCode(length = 6): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   let result = "";
@@ -42,6 +42,17 @@ const QUESTION_CATEGORIES = [
     ],
   },
 ];
+
+interface SelectBlankOption {
+  id: string;
+  text: string;
+  isCorrect: boolean;
+}
+
+interface SelectBlankItem {
+  id: string;
+  options: SelectBlankOption[];
+}
 
 interface ExamQuestionItem {
   tempId: string;
@@ -98,12 +109,19 @@ export default function CreateExamPage() {
     { id: "stmt_1", text: "", isCorrect: true },
   ]);
   const [textBlanks, setTextBlanks] = useState([{ id: "blank_1", correctAnswers: "" }]);
-  const [selectBlanks, setSelectBlanks] = useState([
-    { id: "blank_1", optionsText: "Đáp án A, Đáp án B", correctAnswer: "Đáp án A" },
+  
+  // STATE ĐIỀN KHUYẾT TRẮC NGHIỆM: Mỗi ô điền khuyết có bộ trắc nghiệm riêng
+  const [selectBlanks, setSelectBlanks] = useState<SelectBlankItem[]>([
+    {
+      id: "blank_1",
+      options: [
+        { id: "opt_1_1", text: "", isCorrect: true },
+        { id: "opt_1_2", text: "", isCorrect: false },
+      ],
+    },
   ]);
   const [sampleAnswer, setSampleAnswer] = useState("");
 
-  // Re-roll mã PIN ngẫu nhiên
   function handleRegenerateAccessCode() {
     setAccessCode(generateRandomAccessCode(6));
   }
@@ -155,7 +173,80 @@ export default function CreateExamPage() {
     setIsBankModalOpen(false);
   }
 
-  // HELPER MANAGERS CHO INLINE FORM
+  // HELPERS QUẢN LÝ DẠNG TRẮC NGHIỆM ĐIỀN KHUYẾT (SELECT BLANKS)
+  const addSelectBlank = () => {
+    const now = Date.now();
+    setSelectBlanks((prev) => [
+      ...prev,
+      {
+        id: `blank_${now}`,
+        options: [
+          { id: `opt_${now}_1`, text: "", isCorrect: true },
+          { id: `opt_${now}_2`, text: "", isCorrect: false },
+        ],
+      },
+    ]);
+  };
+
+  const removeSelectBlank = (blankId: string) => {
+    if (selectBlanks.length <= 1) return;
+    setSelectBlanks((prev) => prev.filter((b) => b.id !== blankId));
+  };
+
+  const addOptionToSelectBlank = (blankId: string) => {
+    setSelectBlanks((prev) =>
+      prev.map((b) => {
+        if (b.id !== blankId) return b;
+        return {
+          ...b,
+          options: [
+            ...b.options,
+            { id: `opt_${Date.now()}`, text: "", isCorrect: false },
+          ],
+        };
+      })
+    );
+  };
+
+  const removeOptionFromSelectBlank = (blankId: string, optionId: string) => {
+    setSelectBlanks((prev) =>
+      prev.map((b) => {
+        if (b.id !== blankId) return b;
+        if (b.options.length <= 2) {
+          alert("Mỗi ô trắc nghiệm cần ít nhất 2 lựa chọn!");
+          return b;
+        }
+        return {
+          ...b,
+          options: b.options.filter((o) => o.id !== optionId),
+        };
+      })
+    );
+  };
+
+  const updateOptionInSelectBlank = (
+    blankId: string,
+    optionId: string,
+    text: string,
+    isCorrect: boolean
+  ) => {
+    setSelectBlanks((prev) =>
+      prev.map((b) => {
+        if (b.id !== blankId) return b;
+        return {
+          ...b,
+          options: b.options.map((o) => {
+            if (isCorrect) {
+              return { ...o, isCorrect: o.id === optionId, text: o.id === optionId ? text : o.text };
+            }
+            return o.id === optionId ? { ...o, text } : o;
+          }),
+        };
+      })
+    );
+  };
+
+  // HELPER MANAGERS KHÁC
   const addOption = () => {
     setOptions((prev) => [
       ...prev,
@@ -192,17 +283,6 @@ export default function CreateExamPage() {
     setTextBlanks((prev) => prev.filter((b) => b.id !== id));
   };
 
-  const addSelectBlank = () => {
-    setSelectBlanks((prev) => [
-      ...prev,
-      { id: `blank_${Date.now()}`, optionsText: "Đáp án A, Đáp án B", correctAnswer: "Đáp án A" },
-    ]);
-  };
-  const removeSelectBlank = (id: string) => {
-    if (selectBlanks.length <= 1) return;
-    setSelectBlanks((prev) => prev.filter((b) => b.id !== id));
-  };
-
   function resetInlineForm() {
     setFormContent("");
     setFormPoints(1);
@@ -213,7 +293,15 @@ export default function CreateExamPage() {
     ]);
     setStatements([{ id: "stmt_1", text: "", isCorrect: true }]);
     setTextBlanks([{ id: "blank_1", correctAnswers: "" }]);
-    setSelectBlanks([{ id: "blank_1", optionsText: "Đáp án A, Đáp án B", correctAnswer: "Đáp án A" }]);
+    setSelectBlanks([
+      {
+        id: "blank_1",
+        options: [
+          { id: "opt_1_1", text: "", isCorrect: true },
+          { id: "opt_1_2", text: "", isCorrect: false },
+        ],
+      },
+    ]);
     setSampleAnswer("");
   }
 
@@ -247,11 +335,12 @@ export default function CreateExamPage() {
     } else if (formType === "fill_blank_select") {
       questionData.mode = "select";
       questionData.blanks = selectBlanks.map((b) => {
-        const opts = b.optionsText.split(",").map((s) => s.trim()).filter(Boolean);
+        const opts = b.options.map((o) => o.text.trim()).filter(Boolean);
+        const correctOpt = b.options.find((o) => o.isCorrect);
         return {
           id: b.id,
           options: opts,
-          correctAnswer: b.correctAnswer || opts[0] || "",
+          correctAnswer: correctOpt ? correctOpt.text.trim() : opts[0] || "",
         };
       });
     } else if (formType === "essay") {
@@ -398,7 +487,6 @@ export default function CreateExamPage() {
         </h2>
 
         <div className="grid gap-4 sm:grid-cols-2">
-          {/* Tên đề thi */}
           <div className="sm:col-span-2 space-y-1">
             <label className="text-xs font-bold text-slate-700">
               Tên đề thi <span className="text-rose-500">*</span>
@@ -413,7 +501,6 @@ export default function CreateExamPage() {
             />
           </div>
 
-          {/* Mã PIN phòng thi */}
           <div className="space-y-1">
             <div className="flex items-center justify-between">
               <label className="text-xs font-bold text-slate-700">
@@ -437,7 +524,6 @@ export default function CreateExamPage() {
             />
           </div>
 
-          {/* Thời gian làm bài */}
           <div className="space-y-1">
             <label className="text-xs font-bold text-slate-700">
               Thời gian làm bài (Phút)
@@ -451,7 +537,6 @@ export default function CreateExamPage() {
             />
           </div>
 
-          {/* GIỚI HẠN SỐ LẦN LÀM BÀI */}
           <div className="space-y-1">
             <div className="flex items-center justify-between">
               <label className="text-xs font-bold text-slate-700">
@@ -470,7 +555,7 @@ export default function CreateExamPage() {
 
             {maxAttempts === 0 ? (
               <div className="w-full rounded-xl border border-dashed border-indigo-200 bg-indigo-50/60 px-3.5 py-2.5 text-xs font-bold text-indigo-700 flex items-center gap-2">
-                <span className="text-base">∞</span> Cho phép sinh viên thi lại không giới hạn số lần (Dành cho ôn luyện)
+                <span className="text-base">∞</span> Cho phép sinh viên thi lại không giới hạn số lần
               </div>
             ) : (
               <input
@@ -478,13 +563,12 @@ export default function CreateExamPage() {
                 min="1"
                 value={maxAttempts}
                 onChange={(e) => setMaxAttempts(Math.max(1, parseInt(e.target.value) || 1))}
-                placeholder="Nhập số lần (Ví dụ: 1, 2, 4, 10...)"
+                placeholder="Nhập số lần (Ví dụ: 1, 2, 4...)"
                 className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-3.5 py-2.5 text-xs font-bold text-slate-800 outline-none focus:border-indigo-500 focus:bg-white transition"
               />
             )}
           </div>
 
-          {/* Thời gian mở đề */}
           <div className="space-y-1">
             <label className="text-xs font-bold text-slate-700">
               Mở đề từ (Không bắt buộc)
@@ -498,7 +582,6 @@ export default function CreateExamPage() {
             />
           </div>
 
-          {/* Thời gian kết thúc */}
           <div className="space-y-1">
             <label className="text-xs font-bold text-slate-700">
               Đóng đề lúc (Không bắt buộc)
@@ -536,7 +619,7 @@ export default function CreateExamPage() {
               Nội dung câu hỏi ({examQuestions.length} câu)
             </h2>
             <p className="text-[11px] font-semibold text-slate-400 mt-0.5">
-              Tổng điểm đề thi: <b className="text-indigo-600">{totalPoints} điểm</b> (Hệ thống tự động quy đổi về Thang 10 khi chấm)
+              Tổng điểm đề thi: <b className="text-indigo-600">{totalPoints} điểm</b>
             </p>
           </div>
 
@@ -607,7 +690,6 @@ export default function CreateExamPage() {
         )}
       </div>
 
-      {/* COMPONENT MODAL NGÂN HÀNG CÂU HỎI */}
       <BankQuestionModal
         isOpen={isBankModalOpen}
         onClose={() => setIsBankModalOpen(false)}
@@ -620,7 +702,7 @@ export default function CreateExamPage() {
         onConfirm={handleConfirmBankSelection}
       />
 
-      {/* MODAL 2: SOẠN CÂU HỎI MỚI TRỰC TIẾP */}
+      {/* MODAL SOẠN CÂU HỎI MỚI TRỰC TIẾP */}
       {isInlineModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-xs animate-fadeIn">
           <div className="w-full max-w-3xl max-h-[92vh] overflow-y-auto rounded-3xl border border-indigo-100 bg-white p-6 sm:p-8 shadow-2xl space-y-6">
@@ -631,7 +713,7 @@ export default function CreateExamPage() {
                 </div>
                 <div>
                   <h2 className="text-lg font-black text-slate-900">Soạn câu hỏi mới vào đề</h2>
-                  <p className="text-[11px] text-slate-400">Câu hỏi này sẽ thuộc riêng về đề thi đang khởi tạo</p>
+                  <p className="text-[11px] text-slate-400">Câu hỏi sẽ tự động được đồng bộ vào Ngân hàng câu hỏi</p>
                 </div>
               </div>
 
@@ -645,7 +727,7 @@ export default function CreateExamPage() {
             </div>
 
             <form onSubmit={handleAddInlineQuestion} className="space-y-6">
-              {/* Loại câu hỏi */}
+              {/* 1. Chọn loại câu hỏi */}
               <div className="space-y-3">
                 <label className="text-xs font-bold uppercase tracking-wider text-indigo-900 flex items-center gap-1.5">
                   <span className="flex h-4 w-4 items-center justify-center rounded-full bg-indigo-600 text-[10px] text-white">1</span>
@@ -683,7 +765,7 @@ export default function CreateExamPage() {
                 </div>
               </div>
 
-              {/* Nội dung & Điểm */}
+              {/* 2. Nội dung & Điểm */}
               <div className="space-y-3">
                 <label className="text-xs font-bold uppercase tracking-wider text-indigo-900 flex items-center gap-1.5">
                   <span className="flex h-4 w-4 items-center justify-center rounded-full bg-indigo-600 text-[10px] text-white">2</span>
@@ -697,7 +779,7 @@ export default function CreateExamPage() {
                       rows={3}
                       value={formContent}
                       onChange={(e) => setFormContent(e.target.value)}
-                      placeholder="Nhập nội dung câu hỏi (Dùng [___] để làm ô điền khuyết nếu có)..."
+                      placeholder="Nhập nội dung câu hỏi (Dùng [___] làm vị trí ô điền khuyết)..."
                       className="w-full rounded-2xl border-2 border-slate-200 bg-slate-50/50 p-3.5 text-xs text-slate-800 outline-none focus:border-indigo-500 focus:bg-white transition shadow-inner"
                     />
                   </div>
@@ -716,14 +798,14 @@ export default function CreateExamPage() {
                 </div>
               </div>
 
-              {/* Cấu hình đáp án */}
+              {/* 3. Cấu hình đáp án */}
               <div className="space-y-3 rounded-2xl border border-indigo-100 bg-indigo-50/30 p-4 sm:p-5">
                 <label className="text-xs font-bold uppercase tracking-wider text-indigo-900 flex items-center gap-1.5">
                   <span className="flex h-4 w-4 items-center justify-center rounded-full bg-indigo-600 text-[10px] text-white">3</span>
                   Thiết lập đáp án đúng
                 </label>
 
-                {/* A. TRẮC NGHIỆM */}
+                {/* A. TRẮC NGHIỆM TỰ DO */}
                 {(formType === "single_choice" || formType === "multiple_select") && (
                   <div className="space-y-2.5">
                     {options.map((opt, idx) => (
@@ -867,49 +949,79 @@ export default function CreateExamPage() {
                   </div>
                 )}
 
-                {/* D. ĐIỀN KHUYẾT (SELECT TRẮC NGHIỆM) */}
+                {/* D. ĐIỀN KHUYẾT CHỌN TRẮC NGHIỆM (TỰ ĐỘNG SINH BỘ TRẮC NGHIỆM CHO MỖI Ô) */}
                 {formType === "fill_blank_select" && (
-                  <div className="space-y-2.5">
-                    {selectBlanks.map((b, idx) => (
-                      <div key={b.id} className="space-y-2 rounded-xl bg-white p-3 border border-slate-200/80">
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs font-bold text-indigo-900">Ô chọn #{idx + 1}</span>
+                  <div className="space-y-4">
+                    {selectBlanks.map((b, bIdx) => (
+                      <div key={b.id} className="space-y-3 rounded-2xl bg-white p-4 border border-slate-200 shadow-2xs">
+                        <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                          <span className="text-xs font-bold text-indigo-900 uppercase">
+                            Bộ trắc nghiệm cho Ô chọn #{bIdx + 1}
+                          </span>
+                          {selectBlanks.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => removeSelectBlank(b.id)}
+                              className="text-xs font-bold text-rose-500 hover:underline"
+                            >
+                              Xóa ô
+                            </button>
+                          )}
+                        </div>
+
+                        {/* Danh sách lựa chọn cho Ô chọn này */}
+                        <div className="space-y-2">
+                          {b.options.map((opt, oIdx) => (
+                            <div key={opt.id} className="flex items-center gap-2.5 rounded-xl bg-slate-50 p-2 border border-slate-200/80">
+                              <input
+                                type="radio"
+                                name={`select_correct_${b.id}`}
+                                checked={opt.isCorrect}
+                                onChange={() =>
+                                  updateOptionInSelectBlank(b.id, opt.id, opt.text, true)
+                                }
+                                className="h-4 w-4 accent-indigo-600 shrink-0 ml-1 cursor-pointer"
+                              />
+                              <span className="text-xs font-bold text-slate-400 w-5 text-center">
+                                {String.fromCharCode(65 + oIdx)}.
+                              </span>
+                              <input
+                                type="text"
+                                required
+                                value={opt.text}
+                                onChange={(e) =>
+                                  updateOptionInSelectBlank(b.id, opt.id, e.target.value, opt.isCorrect)
+                                }
+                                placeholder={`Lựa chọn ${String.fromCharCode(65 + oIdx)}...`}
+                                className="flex-1 text-xs outline-none bg-transparent font-medium text-slate-800"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => removeOptionFromSelectBlank(b.id, opt.id)}
+                                className="text-slate-400 hover:text-rose-500 font-bold px-2 text-sm"
+                              >
+                                ✕
+                              </button>
+                            </div>
+                          ))}
+
                           <button
                             type="button"
-                            onClick={() => removeSelectBlank(b.id)}
-                            className="text-xs text-rose-500 font-bold"
+                            onClick={() => addOptionToSelectBlank(b.id)}
+                            className="text-xs font-bold text-indigo-600 hover:underline pt-1 inline-block"
                           >
-                            Xóa ô
+                            + Thêm lựa chọn đáp án cho Ô #{bIdx + 1}
                           </button>
                         </div>
-                        <input
-                          type="text"
-                          required
-                          value={b.optionsText}
-                          onChange={(e) =>
-                            setSelectBlanks(selectBlanks.map((item) => item.id === b.id ? { ...item, optionsText: e.target.value } : item))
-                          }
-                          placeholder="Các lựa chọn menu thả xuống (Phân cách bằng phẩy)..."
-                          className="w-full rounded-lg border border-slate-200 p-2 text-xs text-slate-800 outline-none focus:border-indigo-500"
-                        />
-                        <input
-                          type="text"
-                          required
-                          value={b.correctAnswer}
-                          onChange={(e) =>
-                            setSelectBlanks(selectBlanks.map((item) => item.id === b.id ? { ...item, correctAnswer: e.target.value } : item))
-                          }
-                          placeholder="Nhập chính xác đáp án đúng..."
-                          className="w-full rounded-lg border border-emerald-300 bg-emerald-50/30 p-2 text-xs text-emerald-950 font-bold outline-none"
-                        />
                       </div>
                     ))}
+
                     <button
                       type="button"
                       onClick={addSelectBlank}
                       className="text-xs font-bold text-indigo-600 hover:underline pt-1 inline-block"
                     >
-                      + Thêm ô chọn trắc nghiệm
+                      + Thêm ô chọn trắc nghiệm mới
                     </button>
                   </div>
                 )}
@@ -917,7 +1029,7 @@ export default function CreateExamPage() {
                 {/* E. TỰ LUẬN */}
                 {formType === "essay" && (
                   <div className="space-y-1.5">
-                    <span className="text-xs font-bold text-slate-700">Đáp án mẫu / Barem chấm (Dành cho Giảng viên):</span>
+                    <span className="text-xs font-bold text-slate-700">Đáp án mẫu / Barem chấm:</span>
                     <textarea
                       rows={3}
                       value={sampleAnswer}

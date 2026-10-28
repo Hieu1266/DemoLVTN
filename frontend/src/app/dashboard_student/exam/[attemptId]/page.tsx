@@ -318,19 +318,135 @@ export default function TakeExamPage() {
                 </div>
               )}
 
-              {/* C. ĐIỀN KHUYẾT (fill_blank) */}
+              {/* C. ĐIỀN KHUYẾT (TỰ ĐỘNG PHÂN BIỆT NHẬP TAY VS CHỌN TRẮC NGHIỆM) */}
               {(qType.includes("fill") || qType.includes("blank")) && (
-                <div className="pt-1 space-y-2">
-                  <p className="text-[11px] font-bold text-indigo-900">
-                    Nhập câu trả lời điền vào chỗ trống:
-                  </p>
-                  <input
-                    type="text"
-                    value={typeof currentAns === "string" ? currentAns : ""}
-                    onChange={(e) => updateAnswer(qId, e.target.value)}
-                    placeholder="Gõ đáp án của bạn vào đây..."
-                    className="w-full rounded-2xl border border-slate-200 bg-slate-50/50 px-4 py-3 text-xs text-slate-800 outline-none focus:border-indigo-500 focus:bg-white transition"
-                  />
+                <div className="pt-1 space-y-3">
+                  {(() => {
+                    const qData = q.data || {};
+                    const blanks = qData.blanks || [];
+
+                    // Kiểm tra xem có phải dạng CHỌN TRẮC NGHIỆM (SELECT MODE) không
+                    const isSelectMode =
+                      qType === "fill_blank_select" ||
+                      qData.mode === "select" ||
+                      blanks.some(
+                        (b: any) =>
+                          (b.options && b.options.length > 0) || b.optionsText
+                      );
+
+                    // 🔴 DẠNG 1: CHỌN TRẮC NGHIỆM -> RENDER MENU THẢ XUỐNG (<select>)
+                    if (isSelectMode) {
+                      const blanksToRender =
+                        blanks.length > 0
+                          ? blanks
+                          : [
+                              {
+                                id: "blank_1",
+                                options: q.options || qData.options || [],
+                              },
+                            ];
+
+                      return (
+                        <div className="space-y-3">
+                          <p className="text-[11px] font-bold text-indigo-900">
+                            Chọn đáp án thích hợp từ danh sách bên dưới:
+                          </p>
+                          {blanksToRender.map((b: any, bIdx: number) => {
+                            let rawOpts =
+                              b.options ||
+                              b.optionsText ||
+                              q.options ||
+                              qData.options ||
+                              [];
+                            let optionsList: string[] = [];
+
+                            if (Array.isArray(rawOpts)) {
+                              optionsList = rawOpts.map((opt: any) =>
+                                typeof opt === "string"
+                                  ? opt
+                                  : opt.text || String(opt)
+                              );
+                            } else if (typeof rawOpts === "string") {
+                              optionsList = rawOpts
+                                .split(",")
+                                .map((s: string) => s.trim())
+                                .filter(Boolean);
+                            }
+
+                            const currentVal =
+                              typeof currentAns === "object" &&
+                              currentAns !== null
+                                ? currentAns[b.id] || ""
+                                : typeof currentAns === "string"
+                                ? currentAns
+                                : "";
+
+                            return (
+                              <div
+                                key={b.id || bIdx}
+                                className="flex flex-col sm:flex-row sm:items-center gap-2.5 rounded-2xl bg-slate-50 p-3.5 border border-slate-200"
+                              >
+                                {blanksToRender.length > 1 && (
+                                  <span className="text-xs font-bold text-indigo-950 shrink-0">
+                                    Ô chọn #{bIdx + 1}:
+                                  </span>
+                                )}
+                                <select
+                                  value={currentVal}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    if (blanksToRender.length > 1) {
+                                      const prevObj =
+                                        typeof currentAns === "object" &&
+                                        currentAns !== null
+                                          ? currentAns
+                                          : {};
+                                      updateAnswer(qId, {
+                                        ...prevObj,
+                                        [b.id]: val,
+                                      });
+                                    } else {
+                                      updateAnswer(qId, val);
+                                    }
+                                  }}
+                                  className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-xs font-bold text-indigo-900 outline-none focus:border-indigo-600 focus:ring-2 focus:ring-indigo-500/10 transition cursor-pointer"
+                                >
+                                  <option value="">
+                                    -- Click để chọn đáp án --
+                                  </option>
+                                  {optionsList.map(
+                                    (optStr: string, optIdx: number) => (
+                                      <option key={optIdx} value={optStr}>
+                                        {optStr}
+                                      </option>
+                                    )
+                                  )}
+                                </select>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      );
+                    }
+
+                    // 🔴 DẠNG 2: ĐIỀN KHUYẾT NHẬP CHỮ -> RENDER Ô NHẬP VĂN BẢN (<input>)
+                    return (
+                      <div className="space-y-2">
+                        <p className="text-[11px] font-bold text-indigo-900">
+                          Nhập câu trả lời điền vào chỗ trống:
+                        </p>
+                        <input
+                          type="text"
+                          value={
+                            typeof currentAns === "string" ? currentAns : ""
+                          }
+                          onChange={(e) => updateAnswer(qId, e.target.value)}
+                          placeholder="Gõ đáp án của bạn vào đây..."
+                          className="w-full rounded-2xl border border-slate-200 bg-slate-50/50 px-4 py-3 text-xs text-slate-800 outline-none focus:border-indigo-500 focus:bg-white transition"
+                        />
+                      </div>
+                    );
+                  })()}
                 </div>
               )}
 

@@ -36,31 +36,31 @@ def calculate_ends_at(started_at: Optional[datetime], duration_minutes: int) -> 
     return None
 
 
-# ===================================================================
-# 1. THAM GIA THI (HỖ TRỢ THI LẦN 1, LẦN 2 & KIỂM TRA MAX ATTEMPTS)
-# ===================================================================
-# ===================================================================
-# 1. THAM GIA THI (HỖ TRỢ THI LẦN 1, LẦN 2 & KIỂM TRA MAX ATTEMPTS)
-# ===================================================================
+def _ensure_utc(dt: Optional[datetime]) -> Optional[datetime]:
+    """Ép kiểu datetime về UTC chuẩn xác."""
+    if not dt:
+        return None
+    if dt.tzinfo is None:
+        # Nếu DB trả về naive datetime, coi đó là giờ địa phương Server
+        local_tz = datetime.now().astimezone().tzinfo
+        dt = dt.replace(tzinfo=local_tz)
+    return dt.astimezone(timezone.utc)
+
+
 def _get_max_attempts(exam: Any) -> Optional[int]:
-    """Truy xuất an toàn số lần thi tối đa.
-    - Trả về None hoặc -1: Không giới hạn số lần thi.
-    - Trả về N > 0: Giới hạn tối đa N lần thi.
-    """
+    """Truy xuất an toàn số lần thi tối đa."""
     if not exam:
         return None
 
-    # 1. Kiểm tra thuộc tính trực tiếp trên model Exam
     for attr in ["max_attempts", "allowed_attempts", "attempts_limit", "max_attempt"]:
         val = getattr(exam, attr, None)
         if val is not None:
             try:
                 v = int(val)
-                return None if v < 0 else v # Nếu là -1 thì trả về None (không giới hạn)
+                return None if v < 0 else v
             except (ValueError, TypeError):
                 pass
 
-    # 2. Kiểm tra bên trong các cột dạng JSON (settings, data, config)
     for dict_attr in ["settings", "data", "config"]:
         config_dict = getattr(exam, dict_attr, None)
         if isinstance(config_dict, dict):
@@ -73,18 +73,19 @@ def _get_max_attempts(exam: Any) -> Optional[int]:
                     except (ValueError, TypeError):
                         pass
 
-    # 🔴 ĐÃ SỬA: Mặc định nếu không cài đặt gì (None) thì CHO PHÉP THI KHÔNG GIỚI HẠN
-    # (Tránh chặn nhầm khi Load Test K6)
     return None 
 
 
+# ===================================================================
+# 1. THAM GIA THI (RÀNG BUỘC START_AT, END_AT & MAX_ATTEMPTS)
+# ===================================================================
 @router.post("/join", response_model=JoinExamResponse)
 def join_exam(
     req: JoinExamRequest,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    """Sinh viên nhập mã PIN để tham gia phòng thi (Enforce max_attempts)."""
+    """Sinh viên nhập mã PIN để tham gia phòng thi (Kèm kiểm tra thời gian mở/đóng đề)."""
     user_id = UUID(current_user["user_id"])
     clean_code = req.access_code.strip() if req.access_code else ""
     
@@ -99,11 +100,34 @@ def join_exam(
             detail=f"Mã PIN bài thi '{req.access_code}' không hợp lệ hoặc không tồn tại!"
         )
 
+    # 1. KIỂM TRA TRẠNG THÁI ĐỀ THI
     status_str = str(getattr(exam, "status_id", getattr(exam, "status", ""))).upper()
     if status_str not in ["PUBLISHED", "ACTIVE", "READY", ""]:
-        raise HTTPException(status_code=400, detail="Đề thi chưa được mở hoặc đã kết thúc!")
+        raise HTTPException(status_code=400, detail="Đề thi chưa được mở hoặc đã bị đóng!")
 
-    # Lấy toàn bộ danh sách lượt thi của sinh viên đối với đề này
+    # 2. KIỂM TRA THỜI GIAN MỞ/ĐÓNG ĐỀ THI
+    now_utc = datetime.now(timezone.utc)
+    start_at_utc = _ensure_utc(getattr(exam, "start_at", None))
+    end_at_utc = _ensure_utc(getattr(exam, "end_at", None))
+
+    # Nếu chưa đến giờ mở đề -> Chặn ngay
+    if start_at_utc and now_utc < start_at_utc:
+        # Chuyển về giờ địa phương để thông báo sinh viên
+        start_local = start_at_utc.astimezone().strftime("%H:%M ngày %d/%m/%Y")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Đề thi chưa đến giờ mở! Vui lòng quay lại vào lúc {start_local}."
+        )
+
+    # Nếu đã quá giờ đóng đề -> Chặn ngay
+    if end_at_utc and now_utc > end_at_utc:
+        end_local = end_at_utc.astimezone().strftime("%H:%M ngày %d/%m/%Y")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Phòng thi đã đóng cửa vào lúc {end_local}. Bạn không thể tham gia nữa!"
+        )
+
+    # 3. LẤY DANH SÁCH LƯỢT THI CỦA SINH VIÊN
     user_attempts = db.exec(
         select(Attempt).where(
             Attempt.user_id == user_id,
@@ -111,7 +135,7 @@ def join_exam(
         ).order_by(Attempt.started_at.asc())
     ).all()
 
-    # 1. Nếu có lượt thi đang làm dang dở (IN_PROGRESS) -> Cho làm tiếp lượt đó
+    # Nếu có lượt thi đang làm dang dở (IN_PROGRESS) -> Cho làm tiếp
     active_attempt = next((a for a in user_attempts if a.status == "IN_PROGRESS"), None)
     if active_attempt:
         questions = crud_exam.get_exam_questions(db, exam_id=exam.exam_id)
@@ -126,14 +150,13 @@ def join_exam(
             questions=questions
         )
 
-    # 2. Đếm các lượt thi ĐÃ NỘP / HOÀN THÀNH
+    # Đếm các lượt thi đã hoàn thành
     completed_attempts = [a for a in user_attempts if a.status in ["COMPLETED", "NEEDS_GRADING", "SUBMITTED", "FINISHED"]]
     completed_count = len(completed_attempts)
 
-    # 3. KIỂM TRA GIỚI HẠN SỐ LẦN THI (🔴 ĐÃ TỐI ƯU CÂU ĐIỀU KIỆN)
+    # 4. KIỂM TRA GIỚI HẠN SỐ LẦN THI (MAX_ATTEMPTS)
     max_attempts = _get_max_attempts(exam)
 
-    # CHỈ CHẶN KHI max_attempts LỚN HƠN 0 VÀ completed_count >= max_attempts
     if max_attempts is not None and max_attempts > 0:
         if completed_count >= max_attempts:
             raise HTTPException(
@@ -141,7 +164,7 @@ def join_exam(
                 detail=f"Bạn đã sử dụng hết {completed_count}/{max_attempts} lần làm bài thi cho phép!"
             )
 
-    # 4. Tạo lượt thi mới thành công
+    # 5. Tạo lượt thi mới
     attempt, questions = crud_attempt.create_attempt(db, user_id=user_id, exam=exam)
     return JoinExamResponse(
         attempt_id=attempt.attempt_id,
@@ -156,7 +179,7 @@ def join_exam(
 
 
 # ===================================================================
-# 2. DANH SÁCH BÀI ĐÃ THI (GẮN NHÃN LẦN 1, LẦN 2 TRỰC QUAN)
+# 2. DANH SÁCH BÀI ĐÃ THI
 # ===================================================================
 @router.get("/my-results")
 @router.get("/my-history")
@@ -166,7 +189,6 @@ def get_my_attempts(
 ):
     user_id = UUID(current_user["user_id"])
     
-    # Lấy lịch sử theo thứ tự thời gian tăng dần để đếm thứ tự lần thi
     history_asc = db.exec(
         select(Attempt, Exam)
         .where(Attempt.user_id == user_id)
@@ -174,7 +196,6 @@ def get_my_attempts(
         .order_by(Attempt.started_at.asc())
     ).all()
 
-    # Tính tổng số lần thi và thứ tự từng lần thi của từng đề
     exam_counts: Dict[str, int] = {}
     attempt_ordinal: Dict[str, int] = {}
 
@@ -184,7 +205,6 @@ def get_my_attempts(
         attempt_ordinal[str(attempt.attempt_id)] = exam_counts[e_id]
 
     formatted_history = []
-    # Trả về kết quả mới nhất lên đầu
     for attempt, exam in reversed(history_asc):
         score_val = _get_attr(attempt, ["score", "total_score", "earned_score"], 0.0)
         max_val = _get_attr(attempt, ["total_points", "max_score", "max_points"], 10.0)
@@ -217,7 +237,7 @@ def get_my_attempts(
 
 
 # ===================================================================
-# 3. CHI TIẾT KẾT QUẢ BÀI THI (XỬ LÝ KHÓA XEM ĐÁP ÁN NẾU allow_review = False)
+# 3. CHI TIẾT KẾT QUẢ BÀI THI
 # ===================================================================
 @router.get("/{attempt_id}/result")
 def get_attempt_result(
@@ -311,7 +331,6 @@ def get_attempt_result(
         "submitted_at": completed_time,
         "allow_review_answers": allow_review,
         "review_allowed": allow_review,
-        # NẾU KHÔNG CHO PHÉP XEM LẠI BÀI -> ÉP VALUE BẰNG NONE ĐỂ HỢP CHUẨN FRONTEND
         "answers": detailed_answers if allow_review else None
     }
 

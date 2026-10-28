@@ -2,16 +2,14 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import AuthShell from "@/src/components/AuthShell";
 import { AuthButton, AuthField, LockIcon, MailIcon, Rise } from "@/src/components/AuthField";
 import { login } from "@/src/actions/auth";
 import { errMsg } from "@/src/lib/api";
-import { homeByRole } from "@/src/lib/session";
+import { homeByRole, saveSession } from "@/src/lib/session";
 import { errorBox } from "@/src/lib/ui";
 
 export default function LoginPage() {
-  const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPw, setShowPw] = useState(false);
@@ -23,11 +21,18 @@ export default function LoginPage() {
     setError("");
     setLoading(true);
     try {
-      const user = await login(email, password);
-      router.push(homeByRole(user.user?.role));
+      const res = await login(email, password);
+
+      // 1. Lưu token và thông tin user MỚI vào localStorage (đồng thời làm sạch dữ liệu cũ)
+      if (res?.access_token && res?.user) {
+        saveSession(res.access_token, res.user);
+      }
+
+      // 2. Chuyển hướng cứng (window.location.href) để Next.js xóa toàn bộ Router Cache cũ
+      const targetUrl = homeByRole(res.user?.role);
+      window.location.href = targetUrl;
     } catch (err) {
       setError(errMsg(err));
-    } finally {
       setLoading(false);
     }
   }
@@ -42,7 +47,15 @@ export default function LoginPage() {
         {error && <div className={errorBox}>{error}</div>}
 
         <Rise i={1}>
-          <AuthField label="Email" icon={<MailIcon />} type="email" required placeholder="email@example.com" value={email} onChange={(e) => setEmail(e.target.value)} />
+          <AuthField 
+            label="Email" 
+            icon={<MailIcon />} 
+            type="email" 
+            required 
+            placeholder="email@example.com" 
+            value={email} 
+            onChange={(e) => setEmail(e.target.value)} 
+          />
         </Rise>
 
         <Rise i={2}>
@@ -55,7 +68,11 @@ export default function LoginPage() {
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             suffix={
-              <button type="button" onClick={() => setShowPw(!showPw)} className="text-xs font-medium opacity-60 hover:opacity-100">
+              <button 
+                type="button" 
+                onClick={() => setShowPw(!showPw)} 
+                className="text-xs font-medium opacity-60 hover:opacity-100"
+              >
                 {showPw ? "Ẩn" : "Hiện"}
               </button>
             }
@@ -63,7 +80,9 @@ export default function LoginPage() {
         </Rise>
 
         <Rise i={3}>
-          <AuthButton loading={loading}>{loading ? "Đang đăng nhập..." : "Đăng nhập"}</AuthButton>
+          <AuthButton loading={loading}>
+            {loading ? "Đang đăng nhập..." : "Đăng nhập"}
+          </AuthButton>
         </Rise>
 
         <Rise i={4}>
