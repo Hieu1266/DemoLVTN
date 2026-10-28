@@ -92,7 +92,6 @@ export default function GradingPage() {
     }
   }
 
-  // Bóc tách danh sách câu hỏi
   const answersList: any[] = detail
     ? Array.isArray(detail.answers)
       ? detail.answers
@@ -120,46 +119,51 @@ export default function GradingPage() {
     : 10;
 
   return (
-    <div className="mx-auto max-w-[1600px] space-y-4 py-4 px-4">
-      {/* HEADER PAGE */}
-      <div className="flex items-center justify-between border-b border-slate-200 pb-3">
-        <div>
+    // KHÓA CỨNG CHIỀU CAO TOÀN TRANG BẰNG ĐÚNG MÀN HÌNH (100vh)
+    <div className="flex flex-col h-[calc(100vh-80px)] w-full max-w-[1700px] mx-auto p-4 space-y-3 overflow-hidden">
+      
+      {/* HEADER TOP BAR */}
+      <div className="flex-shrink-0 flex items-center justify-between border-b border-slate-200 pb-3">
+        <div className="flex items-center gap-3">
           <Link
             href={`/dashboard_instructor/exams/${id}`}
-            className="text-xs font-bold text-indigo-600 hover:underline inline-flex items-center gap-1"
+            className="text-xs font-bold text-indigo-600 hover:underline flex items-center gap-1"
           >
             ← Chi tiết đề thi
           </Link>
-          <h1 className="text-xl font-black text-slate-900 tracking-tight">
+          <span className="text-slate-300">|</span>
+          <h1 className="text-lg font-black text-slate-900 tracking-tight">
             Chấm Bài Sinh Viên
           </h1>
         </div>
         {rows && (
-          <div className="text-xs font-bold text-slate-500 bg-slate-100 px-3 py-1.5 rounded-lg">
-            Tổng số bài nộp: <span className="text-indigo-600 font-black">{rows.length}</span>
+          <div className="text-xs font-bold text-slate-600 bg-slate-100 px-3 py-1 rounded-full border border-slate-200">
+            Tổng bài nộp: <span className="text-indigo-600 font-black">{rows.length}</span>
           </div>
         )}
       </div>
 
       {error && (
-        <div className="rounded-2xl border border-rose-200 bg-rose-50 p-3 text-xs font-bold text-rose-600">
+        <div className="flex-shrink-0 rounded-xl border border-rose-200 bg-rose-50 p-2.5 text-xs font-bold text-rose-600">
           {error}
         </div>
       )}
 
-      {/* MASTER-DETAIL GRID LAYOUT (2 CỘT TÁCH BIỆT) */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+      {/* KHUNG MASTER-DETAIL (ÉP CỨNG FLEX-ROW NGANG, KHÔNG DÙNG GRID) */}
+      <div className="flex-1 flex flex-row gap-4 min-h-0 overflow-hidden">
         
-        {/* CỘT TRÁI: DANH SÁCH BÀI NỘP (CỐ ĐỊNH CHIỀU CAO + TỰ CUỘN) */}
-        <div className="lg:col-span-5 rounded-3xl border border-slate-200 bg-white shadow-sm overflow-hidden flex flex-col h-[calc(100vh-170px)] sticky top-4">
-          <div className="bg-slate-50/80 px-4 py-3 border-b border-slate-200 flex justify-between items-center">
-            <h2 className="text-xs font-black uppercase tracking-wider text-indigo-900">
-              Danh sách bài nộp
+        {/* CỘT TRÁI: DANH SÁCH BÀI NỘP (CỐ ĐỊNH RỘNG 380px, CUỘN ĐỘC LẬP) */}
+        <div className="w-[380px] flex-shrink-0 flex flex-col min-h-0 bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
+          <div className="flex-shrink-0 bg-slate-50 px-4 py-3 border-b border-slate-200 flex justify-between items-center">
+            <h2 className="text-xs font-black uppercase tracking-wider text-slate-700">
+              Danh sách bài nộp ({rows?.length ?? 0})
             </h2>
-            <span className="text-[10px] text-slate-400 font-medium">Click chọn để chấm</span>
+            <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded">
+              Chọn để chấm
+            </span>
           </div>
 
-          <div className="flex-1 overflow-y-auto divide-y divide-slate-100">
+          <div className="flex-1 overflow-y-auto min-h-0 divide-y divide-slate-100">
             {loading ? (
               <div className="py-12 text-center text-xs font-bold text-slate-400">
                 Đang tải danh sách...
@@ -180,7 +184,7 @@ export default function GradingPage() {
                 const maxVal = r.max_score ?? r.total_points ?? 10;
                 const scoreDisplay =
                   scoreVal !== undefined && scoreVal !== null
-                    ? `${scoreVal} / ${maxVal}`
+                    ? `${scoreVal}/${maxVal}`
                     : "Chưa chấm";
 
                 const isNeedsGrading =
@@ -197,24 +201,26 @@ export default function GradingPage() {
                     key={currentAttemptId}
                     onClick={() => openSubmission(currentAttemptId)}
                     className={`p-3.5 cursor-pointer transition flex items-center justify-between gap-3 hover:bg-slate-50 ${
-                      isSelected ? "bg-indigo-50/80 border-l-4 border-indigo-600" : ""
+                      isSelected
+                        ? "bg-indigo-50/90 border-l-4 border-indigo-600 font-semibold"
+                        : ""
                     }`}
                   >
                     <div className="space-y-1 min-w-0 flex-1">
-                      <p className="text-xs font-bold text-slate-900 truncate">
+                      <p className={`text-xs truncate ${isSelected ? "text-indigo-950 font-bold" : "text-slate-800 font-medium"}`}>
                         {studentName}
                       </p>
-                      <p className="text-[11px] text-slate-400">
+                      <p className="text-[10px] text-slate-400">
                         {fmtDate(r.submitted_at || r.completed_at)}
                       </p>
                     </div>
 
-                    <div className="text-right space-y-1">
+                    <div className="text-right space-y-1 flex-shrink-0">
                       <span className="text-xs font-black text-indigo-600 block">
                         {scoreDisplay}
                       </span>
                       <span
-                        className={`inline-block rounded-md px-2 py-0.5 text-[9px] font-black uppercase ${
+                        className={`inline-block rounded px-1.5 py-0.5 text-[9px] font-black uppercase ${
                           isNeedsGrading
                             ? "bg-amber-100 text-amber-800"
                             : "bg-emerald-100 text-emerald-800"
@@ -230,45 +236,45 @@ export default function GradingPage() {
           </div>
         </div>
 
-        {/* CỘT PHẢI: CHI TIẾT BÀI THI & KHUNG CHẤM ĐIỂM */}
-        <div className="lg:col-span-7 h-[calc(100vh-170px)] overflow-y-auto pr-1">
+        {/* CỘT PHẢI: CHI TIẾT BÀI THI (TỰ ĐỘNG PHÌNH RỘNG & CUỘN ĐỘC LẬP) */}
+        <div className="flex-1 flex flex-col min-h-0 bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
           {loadingDetail ? (
-            <div className="rounded-3xl border border-slate-200 bg-white p-12 text-center text-xs font-bold text-slate-400">
+            <div className="flex-1 flex items-center justify-center p-12 text-xs font-bold text-slate-400">
               Đang tải chi tiết bài làm...
             </div>
           ) : !detail ? (
-            <div className="rounded-3xl border border-dashed border-slate-300 bg-white p-16 text-center space-y-3">
-              <div className="mx-auto h-12 w-12 text-slate-300 flex items-center justify-center rounded-full bg-slate-50 font-bold text-xl">
-                📝
+            <div className="flex-1 flex flex-col items-center justify-center p-12 text-center space-y-3 bg-slate-50/50">
+              <div className="h-12 w-12 text-slate-400 flex items-center justify-center rounded-2xl bg-white border border-slate-200 text-xl shadow-xs">
+                👈
               </div>
-              <p className="text-xs font-bold text-slate-500">
-                Vui lòng chọn một sinh viên ở danh sách bên trái để bắt đầu chấm bài.
+              <p className="text-xs font-bold text-slate-600">
+                Chọn một sinh viên ở danh sách bên trái để chấm bài trực tiếp tại đây.
               </p>
             </div>
           ) : (
-            <div className="rounded-3xl border border-indigo-100 bg-white p-6 shadow-sm space-y-6">
-              {/* CỤM TỔNG QUAN SINH VIÊN */}
-              <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-100 pb-4">
+            <div className="flex-1 flex flex-col min-h-0">
+              {/* Header cố định ở cột phải */}
+              <div className="flex-shrink-0 bg-slate-50 px-6 py-3.5 border-b border-slate-200 flex items-center justify-between gap-4">
                 <div>
-                  <span className="text-[10px] font-black uppercase tracking-wider text-indigo-600">
-                    Chi tiết bài thi
+                  <span className="text-[10px] font-black uppercase tracking-wider text-indigo-600 block">
+                    Đang xem bài làm
                   </span>
-                  <h2 className="text-lg font-black text-slate-900">
+                  <h2 className="text-base font-black text-slate-900">
                     {detailStudentName}
                   </h2>
                 </div>
-                <div className="rounded-2xl bg-indigo-50 px-4 py-2 text-right border border-indigo-100">
-                  <p className="text-[10px] font-bold text-slate-400 uppercase">
-                    Tổng điểm hiện tại
-                  </p>
-                  <p className="text-xl font-black text-indigo-600">
-                    {detailScore} / {detailMaxScore} điểm
-                  </p>
+                <div className="bg-white px-4 py-1.5 rounded-xl border border-indigo-100 text-right shadow-2xs">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase block">
+                    Điểm số
+                  </span>
+                  <span className="text-lg font-black text-indigo-600">
+                    {detailScore} / {detailMaxScore}
+                  </span>
                 </div>
               </div>
 
-              {/* DANH SÁCH CÂU HỎI */}
-              <div className="space-y-4">
+              {/* Nội dung các câu hỏi cuộn độc lập */}
+              <div className="flex-1 overflow-y-auto min-h-0 p-6 space-y-4">
                 {answersList.length === 0 ? (
                   <div className="py-8 text-center text-xs text-slate-400">
                     Không tìm thấy dữ liệu câu hỏi trong bài thi này.
@@ -288,7 +294,7 @@ export default function GradingPage() {
                     return (
                       <div
                         key={qId}
-                        className="rounded-2xl border border-slate-200 bg-slate-50/50 p-4 space-y-3"
+                        className="rounded-2xl border border-slate-200 bg-slate-50/40 p-4 space-y-3"
                       >
                         <div className="flex items-start justify-between gap-3">
                           <div className="space-y-1">
@@ -300,7 +306,7 @@ export default function GradingPage() {
                                 {isEssay ? "Tự luận" : qType || "Câu hỏi"}
                               </span>
                               <span className="text-[11px] font-semibold text-slate-400">
-                                · Tối đa: {maxPts} điểm
+                                · Thang điểm: {maxPts}
                               </span>
                             </div>
                             <p className="text-xs font-bold text-slate-800">
@@ -321,7 +327,7 @@ export default function GradingPage() {
                           )}
                         </div>
 
-                        {/* Bài làm của sinh viên */}
+                        {/* Bài làm sinh viên */}
                         <div className="space-y-1">
                           <p className="text-[10px] font-bold uppercase text-slate-400">
                             Bài làm sinh viên:
@@ -348,7 +354,7 @@ export default function GradingPage() {
                           <div className="flex items-center justify-between gap-3 pt-2 border-t border-slate-200/60">
                             <div className="flex items-center gap-2">
                               <span className="text-xs font-bold text-slate-700">
-                                Điểm:
+                                Nhập điểm:
                               </span>
                               <input
                                 type="number"
@@ -375,7 +381,7 @@ export default function GradingPage() {
                               onClick={() => saveGrade(qId)}
                               className="rounded-xl bg-indigo-600 px-3.5 py-1.5 text-xs font-bold text-white hover:bg-indigo-700 disabled:opacity-50 transition"
                             >
-                              {savingQId === qId ? "Lưu..." : "Lưu điểm"}
+                              {savingQId === qId ? "Lưu..." : "Lưu điểm câu này"}
                             </button>
                           </div>
                         ) : (
@@ -397,7 +403,6 @@ export default function GradingPage() {
   );
 }
 
-// HELPER FUNCTIONS
 function strLower(val: any): string {
   return String(val || "").toLowerCase();
 }
