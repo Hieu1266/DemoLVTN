@@ -3,31 +3,22 @@
 import React, { useEffect, useState, useCallback, useMemo } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { getSubmission, gradeAnswer, listSubmissions } from "@/src/actions/exam";
+import { listSubmissions } from "@/src/actions/exam";
 import { errMsg } from "@/src/lib/api";
 import { fmtDate } from "@/src/lib/ui";
 import type { SubmissionRow } from "@/src/types/exam";
 
-const PAGE_SIZE = 10; // Số lượng bài nộp hiển thị trên mỗi trang
+const PAGE_SIZE = 15;
 
-export default function GradingPage() {
+export default function GradingListPage() {
   const { id } = useParams<{ id: string }>();
   const [rows, setRows] = useState<SubmissionRow[] | null>(null);
-  const [detail, setDetail] = useState<any | null>(null);
-  const [scores, setScores] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
-  const [loadingDetail, setLoadingDetail] = useState(false);
-  const [savingQId, setSavingQId] = useState<string | null>(null);
   const [error, setError] = useState("");
 
-  // State hỗ trợ Phân trang & Bộ lọc
   const [currentPage, setCurrentPage] = useState(1);
   const [statusFilter, setStatusFilter] = useState<"ALL" | "NEEDS_GRADING" | "DONE">("ALL");
 
-  // Helper lấy Attempt ID an toàn để tránh lỗi TypeScript TS2339
-  const getAttemptId = useCallback((r: any) => r?.attempt_id || r?.id || "", []);
-
-  // 1. Load danh sách bài nộp từ Server
   const loadSubmissions = useCallback(async () => {
     if (!id) return;
     try {
@@ -45,64 +36,6 @@ export default function GradingPage() {
     loadSubmissions();
   }, [loadSubmissions]);
 
-  // 2. Mở Modal chấm bài chi tiết của 1 sinh viên
-  async function openSubmission(attemptId: string) {
-    if (!attemptId) return;
-    setError("");
-    setLoadingDetail(true);
-    try {
-      const res = await getSubmission(attemptId);
-      const d = res?.data || res;
-      setDetail(d);
-
-      const ansList = Array.isArray(d?.answers)
-        ? d.answers
-        : Array.isArray(d?.questions)
-        ? d.questions
-        : Array.isArray(d?.details)
-        ? d.details
-        : [];
-
-      const initialScores: Record<string, number> = {};
-      ansList.forEach((a: any) => {
-        const qKey = a.question_id || a.id || a.answer_id;
-        const pts =
-          a.earned_points ??
-          a.points_awarded ??
-          a.points_earned ??
-          a.score ??
-          0;
-        initialScores[qKey] = Number(pts);
-      });
-      setScores(initialScores);
-    } catch (e) {
-      setError(errMsg(e));
-    } finally {
-      setLoadingDetail(false);
-    }
-  }
-
-  // 3. Lưu điểm tự luận
-  async function saveGrade(questionId: string) {
-    if (!detail) return;
-    const targetAttemptId = getAttemptId(detail);
-    setSavingQId(questionId);
-    try {
-      const score = scores[questionId] ?? 0;
-      await gradeAnswer(targetAttemptId, questionId, score);
-
-      const res = await getSubmission(targetAttemptId);
-      const updatedDetail = res?.data || res;
-      setDetail(updatedDetail);
-      await loadSubmissions();
-    } catch (e) {
-      setError(errMsg(e));
-    } finally {
-      setSavingQId(null);
-    }
-  }
-
-  // Lọc danh sách theo trạng thái
   const filteredRows = useMemo(() => {
     if (!rows) return [];
     return rows.filter((r: any) => {
@@ -114,61 +47,15 @@ export default function GradingPage() {
     });
   }, [rows, statusFilter]);
 
-  // Phân trang
   const totalPages = Math.ceil(filteredRows.length / PAGE_SIZE) || 1;
   const paginatedRows = useMemo(() => {
     const start = (currentPage - 1) * PAGE_SIZE;
     return filteredRows.slice(start, start + PAGE_SIZE);
   }, [filteredRows, currentPage]);
 
-  // Chuyển sinh viên kế tiếp trực tiếp trong Modal
-  const currentDetailIndex = filteredRows.findIndex(
-    (r: any) => getAttemptId(r) === getAttemptId(detail)
-  );
-
-  function nextStudent() {
-    if (currentDetailIndex >= 0 && currentDetailIndex < filteredRows.length - 1) {
-      const nextAttempt = filteredRows[currentDetailIndex + 1];
-      openSubmission(getAttemptId(nextAttempt));
-    }
-  }
-
-  function prevStudent() {
-    if (currentDetailIndex > 0) {
-      const prevAttempt = filteredRows[currentDetailIndex - 1];
-      openSubmission(getAttemptId(prevAttempt));
-    }
-  }
-
-  const answersList: any[] = detail
-    ? Array.isArray(detail.answers)
-      ? detail.answers
-      : Array.isArray(detail.questions)
-      ? detail.questions
-      : Array.isArray(detail.details)
-      ? detail.details
-      : []
-    : [];
-
-  const detailStudentName = detail
-    ? detail.student_name ||
-      detail.full_name ||
-      detail.name ||
-      detail.student?.full_name ||
-      (detail.user_id ? `Sinh viên #${String(detail.user_id).slice(0, 8)}` : "Sinh viên")
-    : "";
-
-  const detailScore = detail
-    ? detail.score ?? detail.earned_score ?? detail.total_score ?? detail.final_score ?? 0
-    : 0;
-
-  const detailMaxScore = detail
-    ? detail.max_score ?? detail.total_points ?? detail.max_points ?? 10
-    : 10;
-
   return (
     <div className="mx-auto max-w-7xl space-y-6 py-6 px-4">
-      {/* HEADER PAGE */}
+      {/* HEADER */}
       <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 pb-4">
         <div>
           <Link
@@ -178,11 +65,11 @@ export default function GradingPage() {
             ← Chi tiết đề thi
           </Link>
           <h1 className="text-2xl font-black text-slate-900 tracking-tight mt-1">
-            Chấm Bài Sinh Viên
+            Danh Sách Bài Nộp Sinh Viên
           </h1>
         </div>
 
-        {/* BỘ LỌC TRẠNG THÁI */}
+        {/* BỘ LỌC */}
         <div className="flex items-center gap-2">
           <button
             onClick={() => { setStatusFilter("ALL"); setCurrentPage(1); }}
@@ -223,7 +110,7 @@ export default function GradingPage() {
         </div>
       )}
 
-      {/* DANH SÁCH BÀI NỘP DẠNG BẢNG CÓ PHÂN TRANG */}
+      {/* BẢNG DANH SÁCH */}
       <div className="rounded-3xl border border-slate-200 bg-white shadow-xs overflow-hidden">
         {loading ? (
           <div className="py-16 text-center text-xs font-bold text-slate-400">
@@ -266,10 +153,10 @@ export default function GradingPage() {
                       r.needs_grading ||
                       r.status === "SUBMITTED";
 
-                    const currentAttemptId = getAttemptId(r);
+                    const attemptId = r.attempt_id || r.id;
 
                     return (
-                      <tr key={currentAttemptId} className="hover:bg-indigo-50/30 transition">
+                      <tr key={attemptId} className="hover:bg-indigo-50/30 transition">
                         <td className="py-3.5 px-4 font-bold text-slate-800">
                           {studentName}
                         </td>
@@ -291,13 +178,12 @@ export default function GradingPage() {
                           </span>
                         </td>
                         <td className="py-3.5 px-4 text-right">
-                          <button
-                            type="button"
-                            onClick={() => openSubmission(currentAttemptId)}
-                            className="rounded-xl bg-indigo-600 px-4 py-1.5 text-xs font-bold text-white shadow-xs hover:bg-indigo-700 active:scale-95 transition"
+                          <Link
+                            href={`/dashboard_instructor/exams/${id}/grading/${attemptId}`}
+                            className="inline-block rounded-xl bg-indigo-600 px-4 py-1.5 text-xs font-bold text-white shadow-xs hover:bg-indigo-700 active:scale-95 transition"
                           >
-                            Xem & Chấm bài
-                          </button>
+                            Chấm bài →
+                          </Link>
                         </td>
                       </tr>
                     );
@@ -306,7 +192,7 @@ export default function GradingPage() {
               </table>
             </div>
 
-            {/* BAR PHÂN TRANG */}
+            {/* THANH PHÂN TRANG */}
             <div className="flex items-center justify-between px-6 py-4 border-t border-slate-100 bg-slate-50/50">
               <span className="text-xs font-medium text-slate-500">
                 Hiển thị {Math.min((currentPage - 1) * PAGE_SIZE + 1, filteredRows.length)} -{" "}
@@ -336,243 +222,6 @@ export default function GradingPage() {
           </>
         )}
       </div>
-
-      {/* MODAL CHẤM BÀI TRƯỢT NỔI NỔI TRÊN MÀN HÌNH */}
-      {(detail || loadingDetail) && (
-        <div className="fixed inset-0 z-50 flex items-center justify-end bg-slate-900/60 backdrop-blur-xs p-2 sm:p-4">
-          <div className="relative flex flex-col h-full w-full max-w-3xl bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden">
-            
-            {/* MODAL HEADER */}
-            <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-6 py-4">
-              <div>
-                <span className="text-[10px] font-black uppercase tracking-wider text-indigo-600 block">
-                  Khung chấm điểm bài thi
-                </span>
-                <h2 className="text-base font-black text-slate-900">
-                  {loadingDetail ? "Đang tải dữ liệu..." : detailStudentName}
-                </h2>
-              </div>
-
-              <div className="flex items-center gap-3">
-                {/* NÚT CHUYỂN SINH VIÊN */}
-                {detail && (
-                  <div className="flex items-center gap-1 border-r border-slate-200 pr-3">
-                    <button
-                      disabled={currentDetailIndex <= 0}
-                      onClick={prevStudent}
-                      className="rounded-lg px-2.5 py-1.5 bg-white border border-slate-200 hover:bg-slate-100 disabled:opacity-30 text-xs font-bold text-slate-700 transition"
-                      title="Bài trước"
-                    >
-                      ▲ Bài trước
-                    </button>
-                    <button
-                      disabled={currentDetailIndex >= filteredRows.length - 1}
-                      onClick={nextStudent}
-                      className="rounded-lg px-2.5 py-1.5 bg-white border border-slate-200 hover:bg-slate-100 disabled:opacity-30 text-xs font-bold text-slate-700 transition"
-                      title="Bài kế tiếp"
-                    >
-                      ▼ Bài kế
-                    </button>
-                  </div>
-                )}
-
-                <button
-                  onClick={() => setDetail(null)}
-                  className="rounded-full bg-slate-200/80 p-2 text-slate-600 hover:bg-slate-300 transition font-black text-xs w-8 h-8 flex items-center justify-center"
-                >
-                  ✕
-                </button>
-              </div>
-            </div>
-
-            {/* MODAL BODY CUỘN ĐỘC LẬP */}
-            <div className="flex-1 overflow-y-auto p-6 space-y-6">
-              {loadingDetail ? (
-                <div className="py-20 text-center text-xs font-bold text-slate-400">
-                  Đang tải chi tiết bài làm của sinh viên...
-                </div>
-              ) : (
-                <>
-                  {/* TỔNG ĐIỂM */}
-                  <div className="flex items-center justify-between rounded-2xl bg-indigo-50 border border-indigo-100 p-4">
-                    <div>
-                      <p className="text-[10px] font-bold text-slate-400 uppercase">
-                        Trạng thái chấm điểm
-                      </p>
-                      <p className="text-xs font-bold text-indigo-950">
-                        {answersList.some((a) => strLower(a.question_type || a.type) === "essay")
-                          ? "Bài thi có câu tự luận cần xem xét"
-                          : "Đã chấm tự động hoàn tất"}
-                      </p>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-[10px] font-bold text-slate-400 uppercase">
-                        Tổng điểm đạt được
-                      </p>
-                      <p className="text-2xl font-black text-indigo-600">
-                        {detailScore} / {detailMaxScore}
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* DANH SÁCH CÂU HỎI */}
-                  <div className="space-y-4">
-                    {answersList.length === 0 ? (
-                      <div className="py-8 text-center text-xs text-slate-400">
-                        Không tìm thấy thông tin câu hỏi trong bài thi này.
-                      </div>
-                    ) : (
-                      answersList.map((a: any, i: number) => {
-                        const qId = a.question_id || a.id || a.answer_id;
-                        const qType = strLower(a.question_type || a.type);
-                        const studentAns =
-                          a.student_answer ?? a.user_answer ?? a.answer ?? a.answer_data;
-                        const maxPts = a.max_points ?? a.points ?? 1;
-                        const awardedPts =
-                          a.earned_points ?? a.points_earned ?? a.score ?? 0;
-                        const isEssay = qType === "essay";
-                        const isCorrect = a.is_correct ?? a.correct;
-
-                        return (
-                          <div
-                            key={qId}
-                            className="rounded-2xl border border-slate-200 bg-slate-50/50 p-4 space-y-3"
-                          >
-                            <div className="flex items-start justify-between gap-3">
-                              <div className="space-y-1">
-                                <div className="flex items-center gap-2">
-                                  <span className="flex h-5 w-5 items-center justify-center rounded-md bg-slate-900 text-[10px] font-bold text-white">
-                                    #{i + 1}
-                                  </span>
-                                  <span className="rounded-md bg-indigo-100 px-2 py-0.5 text-[10px] font-bold text-indigo-700 uppercase">
-                                    {isEssay ? "Tự luận" : qType || "Câu hỏi"}
-                                  </span>
-                                  <span className="text-[11px] font-semibold text-slate-400">
-                                    · Tối đa: {maxPts} điểm
-                                  </span>
-                                </div>
-                                <p className="text-xs font-bold text-slate-800">
-                                  {a.content || a.title || a.question_title || a.question?.content}
-                                </p>
-                              </div>
-
-                              {!isEssay && isCorrect !== undefined && isCorrect !== null && (
-                                <span
-                                  className={`rounded-md px-2 py-0.5 text-[10px] font-black uppercase ${
-                                    isCorrect
-                                      ? "bg-emerald-100 text-emerald-700"
-                                      : "bg-rose-100 text-rose-700"
-                                  }`}
-                                >
-                                  {isCorrect ? "Đúng" : "Sai"}
-                                </span>
-                              )}
-                            </div>
-
-                            {/* BÀI LÀM SINH VIÊN */}
-                            <div className="space-y-1">
-                              <p className="text-[10px] font-bold uppercase text-slate-400">
-                                Bài làm sinh viên:
-                              </p>
-                              <div className="rounded-xl border border-slate-200 bg-white p-3 text-xs text-slate-800 whitespace-pre-wrap font-medium">
-                                {formatStudentAnswer(studentAns)}
-                              </div>
-                            </div>
-
-                            {/* GỢI Ý ĐÁP ÁN */}
-                            {(a.sample_answer || a.explanation) && (
-                              <div className="space-y-1">
-                                <p className="text-[10px] font-bold uppercase text-indigo-600">
-                                  Gợi ý đáp án / Hướng dẫn chấm:
-                                </p>
-                                <div className="rounded-xl border border-indigo-100 bg-indigo-50/50 p-3 text-xs text-indigo-950 font-medium">
-                                  {a.sample_answer || a.explanation}
-                                </div>
-                              </div>
-                            )}
-
-                            {/* CHẤM ĐIỂM TỰ LUẬN */}
-                            {isEssay ? (
-                              <div className="flex items-center justify-between gap-3 pt-2 border-t border-slate-200/60">
-                                <div className="flex items-center gap-2">
-                                  <span className="text-xs font-bold text-slate-700">
-                                    Nhập điểm:
-                                  </span>
-                                  <input
-                                    type="number"
-                                    min={0}
-                                    max={maxPts}
-                                    step={0.25}
-                                    value={scores[qId] ?? awardedPts}
-                                    onChange={(e) =>
-                                      setScores({
-                                        ...scores,
-                                        [qId]: parseFloat(e.target.value) || 0,
-                                      })
-                                    }
-                                    className="w-20 rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs font-black text-indigo-600 outline-none focus:border-indigo-500"
-                                  />
-                                  <span className="text-xs font-semibold text-slate-500">
-                                    / {maxPts}
-                                  </span>
-                                </div>
-
-                                <button
-                                  type="button"
-                                  disabled={savingQId === qId}
-                                  onClick={() => saveGrade(qId)}
-                                  className="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-bold text-white hover:bg-indigo-700 disabled:opacity-50 transition"
-                                >
-                                  {savingQId === qId ? "Lưu..." : "Lưu điểm câu này"}
-                                </button>
-                              </div>
-                            ) : (
-                              <div className="text-right pt-1 text-xs font-bold text-slate-500">
-                                Điểm: <b className="text-indigo-600">{awardedPts} / {maxPts}</b> (Tự động)
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })
-                    )}
-                  </div>
-                </>
-              )}
-            </div>
-
-            {/* MODAL FOOTER */}
-            <div className="border-t border-slate-200 bg-slate-50 px-6 py-3 text-right">
-              <button
-                type="button"
-                onClick={() => setDetail(null)}
-                className="rounded-xl bg-slate-900 px-5 py-2 text-xs font-bold text-white hover:bg-slate-800 transition"
-              >
-                Đóng
-              </button>
-            </div>
-
-          </div>
-        </div>
-      )}
     </div>
   );
-}
-
-// HELPER FUNCTIONS
-function strLower(val: any): string {
-  return String(val || "").toLowerCase();
-}
-
-function formatStudentAnswer(ans: any): string {
-  if (ans === null || ans === undefined || ans === "") {
-    return "(Không trả lời)";
-  }
-  if (typeof ans === "object") {
-    try {
-      return JSON.stringify(ans, null, 2);
-    } catch {
-      return String(ans);
-    }
-  }
-  return String(ans).trim();
 }
