@@ -22,7 +22,7 @@ async function setAuthCookies(data: TokenResponse) {
   const cookieConfig = {
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'lax' as const,
-    maxAge: 60 * 60 * 72,
+    maxAge: 60 * 60 * 24 * 365,
     path: '/',
   };
 

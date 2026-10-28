@@ -7,7 +7,7 @@ BASE_URL = "http://localhost:31000"
 REGISTER_URL = f"{BASE_URL}/api/v1/users/register"
 LOGIN_URL = f"{BASE_URL}/api/v1/users/login"
 
-NUM_USERS = 10000
+NUM_USERS = 40000
 CONCURRENCY = 20
 PASSWORD = "Password123!"
 
