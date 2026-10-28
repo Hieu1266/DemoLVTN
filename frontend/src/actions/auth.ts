@@ -1,6 +1,6 @@
 'use server';
 
-import { api, AUTH_URL } from "@/src/lib/api";
+import { api, getAuthApiUrl } from "@/src/lib/api";
 import { type SessionUser } from "@/src/lib/session";
 import { cookies } from "next/headers";
 
@@ -39,22 +39,29 @@ async function setAuthCookies(data: TokenResponse) {
 }
 
 export async function register(data: RegisterData) {
-  return api<SessionUser>(AUTH_URL, "/users/register", {
+  return api<SessionUser>(getAuthApiUrl(), "/users/register", {
     method: "POST",
     body: JSON.stringify(data),
     isPublic: true,
   });
 }
 
+// 🔴 SỬA LỖI: Bọc try...catch để trả về Object kết quả mượt mà, không bao giờ bị throw 500
 export async function login(email: string, password: string) {
-  const res = await api<TokenResponse>(AUTH_URL, "/users/login", {
-    method: "POST",
-    body: JSON.stringify({ email, password }),
-    isPublic: true,
-  });
+  try {
+    const authUrl = getAuthApiUrl();
+    const res = await api<TokenResponse>(authUrl, "/users/login", {
+      method: "POST",
+      body: JSON.stringify({ email, password }),
+      isPublic: true,
+    });
 
-  await setAuthCookies(res);
-  return res;
+    await setAuthCookies(res);
+    return { success: true, data: res };
+  } catch (err: any) {
+    const msg = err instanceof Error ? err.message : "Nhập sai mật khẩu hoặc email!";
+    return { success: false, error: msg };
+  }
 }
 
 export async function logout() {

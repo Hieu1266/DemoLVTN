@@ -5,7 +5,6 @@ import Link from "next/link";
 import AuthShell from "@/src/components/AuthShell";
 import { AuthButton, AuthField, LockIcon, MailIcon, Rise } from "@/src/components/AuthField";
 import { login } from "@/src/actions/auth";
-import { errMsg } from "@/src/lib/api";
 import { homeByRole, saveSession } from "@/src/lib/session";
 import { errorBox } from "@/src/lib/ui";
 
@@ -20,19 +19,27 @@ export default function LoginPage() {
     e.preventDefault();
     setError("");
     setLoading(true);
+
     try {
       const res = await login(email, password);
 
-      // 1. Lưu token và thông tin user MỚI vào localStorage (đồng thời làm sạch dữ liệu cũ)
-      if (res?.access_token && res?.user) {
-        saveSession(res.access_token, res.user);
+      // 🔴 NẾU THẤT BẠI: Hứng thông báo lỗi và hiển thị lên giao diện
+      if (!res.success) {
+        setError(res.error || "Nhập sai mật khẩu hoặc email!");
+        setLoading(false);
+        return;
       }
 
-      // 2. Chuyển hướng cứng (window.location.href) để Next.js xóa toàn bộ Router Cache cũ
-      const targetUrl = homeByRole(res.user?.role);
+      // 🟢 NẾU THÀNH CÔNG: Lưu session và chuyển hướng
+      const data = res.data;
+      if (data?.access_token && data?.user) {
+        saveSession(data.access_token, data.user);
+      }
+
+      const targetUrl = homeByRole(data?.user?.role);
       window.location.href = targetUrl;
-    } catch (err) {
-      setError(errMsg(err));
+    } catch (err: any) {
+      setError("Có lỗi kết nối xảy ra. Vui lòng thử lại!");
       setLoading(false);
     }
   }
