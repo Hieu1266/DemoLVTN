@@ -1,6 +1,3 @@
-# ==========================================
-# 1. FRONTEND DEPLOYMENT (Next.js)
-# ==========================================
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -10,7 +7,6 @@ metadata:
     app: frontend
     tier: frontend
 spec:
-  # Không khai báo "replicas": số pod do HPA (auto-scaling.yml) quản lý, tối thiểu 2
   selector:
     matchLabels:
       app: frontend
@@ -34,15 +30,25 @@ spec:
         - name: CONFIG_SERVICE_URL
           value: "http://config-service:8005"
         
-        # 🔴 BIẾN MÔI TRƯỜNG KẾT NỐI API TRONG K8S POD & BROWSER
+        # 🔴 TRƯỜNG HỢP 1: NẾU ĐI QUA API GATEWAY (CỔNG NỘI BỘ 8088 & NODEPORT 30888)
         - name: INTERNAL_AUTH_API_URL
-          value: "http://api-gateway:8080/api/v1"
+          value: "http://api-gateway:8088/api/v1"
         - name: INTERNAL_EXAM_API_URL
-          value: "http://api-gateway:8080/api/v1"
+          value: "http://api-gateway:8088/api/v1"
         - name: NEXT_PUBLIC_AUTH_API_URL
-          value: "http://localhost:31000/api/v1"
+          value: "http://localhost:30888/api/v1"
         - name: NEXT_PUBLIC_EXAM_API_URL
-          value: "http://localhost:31000/api/v1"
+          value: "http://localhost:30888/api/v1"
+
+        # 🔴 TRƯỜNG HỢP 2: NẾU GỌI TRỰC TIẾP TỚI TỪNG SERVICE (BỎ COMMENT NẾU KHÔNG DÙNG GATEWAY)
+        # - name: INTERNAL_AUTH_API_URL
+        #   value: "http://auth-service:8000/api/v1"
+        # - name: INTERNAL_EXAM_API_URL
+        #   value: "http://exam-service:8001/api/v1"
+        # - name: NEXT_PUBLIC_AUTH_API_URL
+        #   value: "http://localhost:31000/api/v1"
+        # - name: NEXT_PUBLIC_EXAM_API_URL
+        #   value: "http://localhost:31001/api/v1"
 
         envFrom:
         - configMapRef:
@@ -53,7 +59,7 @@ spec:
             memory: "256Mi"
             cpu: "100m"
           limits:
-            memory: "512Mi" # 👈 Đã sửa lỗi typo từ 512Gi thành 512Mi
+            memory: "512Mi"
             cpu: "500m"
         livenessProbe:
           httpGet:
@@ -68,9 +74,6 @@ spec:
           initialDelaySeconds: 5
           periodSeconds: 5
 ---
-# ==========================================
-# 2. FRONTEND SERVICE
-# ==========================================
 apiVersion: v1
 kind: Service
 metadata:
