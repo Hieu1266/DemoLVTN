@@ -16,8 +16,10 @@ export default function GradingListPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
+  // State Phân trang, Bộ lọc & Tìm kiếm
   const [currentPage, setCurrentPage] = useState(1);
   const [statusFilter, setStatusFilter] = useState<"ALL" | "NEEDS_GRADING" | "DONE">("ALL");
+  const [searchQuery, setSearchQuery] = useState("");
 
   const loadSubmissions = useCallback(async () => {
     if (!id) return;
@@ -36,17 +38,46 @@ export default function GradingListPage() {
     loadSubmissions();
   }, [loadSubmissions]);
 
+  // Lọc kết quả kết hợp Tìm kiếm + Trạng thái
   const filteredRows = useMemo(() => {
     if (!rows) return [];
+    
     return rows.filter((r: any) => {
+      // 1. Kiểm tra trạng thái bài nộp
       const isNeedsGrading =
         r.status === "NEEDS_GRADING" || r.needs_grading || r.status === "SUBMITTED";
-      if (statusFilter === "NEEDS_GRADING") return isNeedsGrading;
-      if (statusFilter === "DONE") return !isNeedsGrading;
-      return true;
-    });
-  }, [rows, statusFilter]);
+      
+      const matchStatus = 
+        statusFilter === "ALL" ? true :
+        statusFilter === "NEEDS_GRADING" ? isNeedsGrading : !isNeedsGrading;
 
+      if (!matchStatus) return false;
+
+      // 2. Tìm kiếm theo Tên, Email hoặc ID sinh viên
+      if (!searchQuery.trim()) return true;
+      const query = searchQuery.toLowerCase().trim();
+
+      const nameCandidate = (
+        r.student_name ||
+        r.full_name ||
+        r.name ||
+        r.user?.full_name ||
+        r.user?.name ||
+        r.student?.full_name ||
+        r.student?.name ||
+        r.student_email ||
+        r.email ||
+        r.user?.email ||
+        r.user_id ||
+        r.student_id ||
+        ""
+      ).toString().toLowerCase();
+
+      return nameCandidate.includes(query);
+    });
+  }, [rows, statusFilter, searchQuery]);
+
+  // Phân trang
   const totalPages = Math.ceil(filteredRows.length / PAGE_SIZE) || 1;
   const paginatedRows = useMemo(() => {
     const start = (currentPage - 1) * PAGE_SIZE;
@@ -69,38 +100,63 @@ export default function GradingListPage() {
           </h1>
         </div>
 
-        {/* BỘ LỌC */}
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => { setStatusFilter("ALL"); setCurrentPage(1); }}
-            className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition ${
-              statusFilter === "ALL"
-                ? "bg-indigo-600 text-white shadow-xs"
-                : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-            }`}
-          >
-            Tất cả ({rows?.length ?? 0})
-          </button>
-          <button
-            onClick={() => { setStatusFilter("NEEDS_GRADING"); setCurrentPage(1); }}
-            className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition ${
-              statusFilter === "NEEDS_GRADING"
-                ? "bg-amber-500 text-white shadow-xs"
-                : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-            }`}
-          >
-            Cần chấm
-          </button>
-          <button
-            onClick={() => { setStatusFilter("DONE"); setCurrentPage(1); }}
-            className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition ${
-              statusFilter === "DONE"
-                ? "bg-emerald-600 text-white shadow-xs"
-                : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-            }`}
-          >
-            Đã hoàn thành
-          </button>
+        {/* CỤM TÌM KIẾM & BỘ LỌC */}
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Ô TÌM KIẾM SINH VIÊN */}
+          <div className="relative">
+            <input
+              type="text"
+              placeholder="🔍 Tìm tên, email, ID sinh viên..."
+              value={searchQuery}
+              onChange={(e) => {
+                setSearchQuery(e.target.value);
+                setCurrentPage(1); // Reset về trang 1 khi tìm kiếm
+              }}
+              className="w-64 rounded-xl border border-slate-300 bg-white px-3.5 py-1.5 text-xs font-medium text-slate-800 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 transition"
+            />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery("")}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400 hover:text-slate-600"
+              >
+                ✕
+              </button>
+            )}
+          </div>
+
+          {/* NÚT LỌC TRẠNG THÁI */}
+          <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-2xl">
+            <button
+              onClick={() => { setStatusFilter("ALL"); setCurrentPage(1); }}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition ${
+                statusFilter === "ALL"
+                  ? "bg-indigo-600 text-white shadow-xs"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
+            >
+              Tất cả ({rows?.length ?? 0})
+            </button>
+            <button
+              onClick={() => { setStatusFilter("NEEDS_GRADING"); setCurrentPage(1); }}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition ${
+                statusFilter === "NEEDS_GRADING"
+                  ? "bg-amber-500 text-white shadow-xs"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
+            >
+              Cần chấm
+            </button>
+            <button
+              onClick={() => { setStatusFilter("DONE"); setCurrentPage(1); }}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition ${
+                statusFilter === "DONE"
+                  ? "bg-emerald-600 text-white shadow-xs"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
+            >
+              Đã hoàn thành
+            </button>
+          </div>
         </div>
       </div>
 
@@ -118,7 +174,7 @@ export default function GradingListPage() {
           </div>
         ) : filteredRows.length === 0 ? (
           <div className="py-16 text-center text-xs text-slate-400">
-            Không tìm thấy bài nộp nào phù hợp.
+            {searchQuery ? `Không tìm thấy sinh viên khớp với "${searchQuery}"` : "Không tìm thấy bài nộp nào phù hợp."}
           </div>
         ) : (
           <>
@@ -135,10 +191,18 @@ export default function GradingListPage() {
                 </thead>
                 <tbody className="divide-y divide-slate-100 text-xs">
                   {paginatedRows.map((r: any) => {
+                    // Tự động quét mở rộng tất cả alias trường tên/email có thể có từ API Backend
                     const studentName =
                       r.student_name ||
                       r.full_name ||
                       r.name ||
+                      r.user?.full_name ||
+                      r.user?.name ||
+                      r.student?.full_name ||
+                      r.student?.name ||
+                      r.student_email ||
+                      r.email ||
+                      r.user?.email ||
                       (r.user_id ? `Sinh viên #${String(r.user_id).slice(0, 8)}` : "Sinh viên");
 
                     const scoreVal = r.score ?? r.earned_score ?? r.total_score;
@@ -157,8 +221,13 @@ export default function GradingListPage() {
 
                     return (
                       <tr key={attemptId} className="hover:bg-indigo-50/30 transition">
-                        <td className="py-3.5 px-4 font-bold text-slate-800">
-                          {studentName}
+                        <td className="py-3.5 px-4">
+                          <span className="font-bold text-slate-900 block">{studentName}</span>
+                          {r.user_id && (
+                            <span className="text-[10px] text-slate-400 font-medium">
+                              ID: {r.user_id}
+                            </span>
+                          )}
                         </td>
                         <td className="py-3.5 px-4 text-slate-500">
                           {fmtDate(r.submitted_at || r.completed_at)}
@@ -192,7 +261,7 @@ export default function GradingListPage() {
               </table>
             </div>
 
-            {/* THANH PHÂN TRANG */}
+            {/* BAR PHÂN TRANG */}
             <div className="flex items-center justify-between px-6 py-4 border-t border-slate-100 bg-slate-50/50">
               <span className="text-xs font-medium text-slate-500">
                 Hiển thị {Math.min((currentPage - 1) * PAGE_SIZE + 1, filteredRows.length)} -{" "}
