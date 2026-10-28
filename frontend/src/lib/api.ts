@@ -1,23 +1,29 @@
 // src/lib/api.ts
 import { getToken } from "./session";
 
-// 1. Hàm lấy Base URL Auth API (Tự động chuyển giữa Server-side và Client-side)
+// 1. Hàm helper lấy Base URL linh hoạt cho Server & Client
 export function getAuthApiUrl(): string {
-  // Nếu đang chạy ở phía Server (Server Actions / Node.js inside K8s Pod)
   if (typeof window === "undefined") {
-    return process.env.INTERNAL_AUTH_API_URL || "http://api-gateway:8080/api/v1"; 
+    return process.env.INTERNAL_AUTH_API_URL || process.env.NEXT_PUBLIC_AUTH_API_URL || "http://api-gateway:8080/api/v1"; 
   }
-  // Nếu đang chạy ở phía Client (Trình duyệt máy tính)
   return process.env.NEXT_PUBLIC_AUTH_API_URL || "http://localhost:31000/api/v1";
 }
 
-// 2. Hàm lấy Base URL Exam API (Tự động chuyển giữa Server-side và Client-side)
 export function getExamApiUrl(): string {
   if (typeof window === "undefined") {
-    return process.env.INTERNAL_EXAM_API_URL || "http://api-gateway:8080/api/v1"; 
+    return process.env.INTERNAL_EXAM_API_URL || process.env.NEXT_PUBLIC_EXAM_API_URL || "http://api-gateway:8080/api/v1"; 
   }
   return process.env.NEXT_PUBLIC_EXAM_API_URL || "http://localhost:31000/api/v1";
 }
+
+// 2. Export hằng số AUTH_URL & EXAM_URL tương thích với các file action (auth.ts, instructor.ts, exam.ts, question.ts)
+export const AUTH_URL = typeof window === "undefined"
+  ? (process.env.INTERNAL_AUTH_API_URL || process.env.NEXT_PUBLIC_AUTH_API_URL || "http://api-gateway:8080/api/v1")
+  : (process.env.NEXT_PUBLIC_AUTH_API_URL || "http://localhost:31000/api/v1");
+
+export const EXAM_URL = typeof window === "undefined"
+  ? (process.env.INTERNAL_EXAM_API_URL || process.env.NEXT_PUBLIC_EXAM_API_URL || "http://api-gateway:8080/api/v1")
+  : (process.env.NEXT_PUBLIC_EXAM_API_URL || "http://localhost:31000/api/v1");
 
 export const errMsg = (e: unknown) => (e instanceof Error ? e.message : "Có lỗi xảy ra");
 
