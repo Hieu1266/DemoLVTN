@@ -4,7 +4,6 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, select
-from sqlalchemy import text
 
 from app.api.v1.deps import get_db, get_current_user
 from app.crud.crud_exam import crud_exam, parse_dt
@@ -85,6 +84,10 @@ def get_exam_by_id(
     return exam_dict
 
 
+# ===================================================================
+# [BỔ SUNG MỚI] CẬP NHẬT & XÓA ĐỀ THI (SỬA LỖI 405 METHOD NOT ALLOWED)
+# ===================================================================
+
 @router.put("/{exam_id}")
 @router.patch("/{exam_id}")
 def update_exam_by_id(
@@ -101,12 +104,14 @@ def update_exam_by_id(
     if not exam:
         raise HTTPException(status_code=404, detail="Không tìm thấy đề thi để cập nhật!")
 
+    # Cập nhật linh hoạt các trường trong model Exam
     for key, value in payload.items():
         if hasattr(exam, key):
             if key in ("start_at", "end_at"):
-                value = parse_dt(value)
+                value = parse_dt(value)  # chuỗi ISO từ frontend -> datetime
             setattr(exam, key, value)
             
+    # Cập nhật thời gian chỉnh sửa
     if hasattr(exam, "updated_at"):
         setattr(exam, "updated_at", datetime.now(timezone.utc))
 
@@ -115,9 +120,17 @@ def update_exam_by_id(
     db.refresh(exam)
     return exam
 
+from uuid import UUID
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlmodel import Session, select
+
+# ⚠️ LƯU Ý: Đảm bảo import đúng đường dẫn tới model Attempt và Exam của bạn
+from app.models.exam import Exam
+from app.models.attempt import Attempt  # Chỉnh lại đường dẫn nếu file attempt.py nằm chỗ khác
 
 @router.delete("/{exam_id}")
 def delete_exam_by_id(exam_id: UUID, db: Session = Depends(get_db)):
+    # 1. Tìm đề thi trong CSDL
     exam = db.get(Exam, exam_id)
     if not exam:
         raise HTTPException(
@@ -125,12 +138,14 @@ def delete_exam_by_id(exam_id: UUID, db: Session = Depends(get_db)):
             detail="Không tìm thấy đề thi."
         )
 
+    # 2. KIỂM TRA TRƯỚC: Nếu đề thi đã PUBLISHED hoặc CLOSED -> Chặn ngay
     if hasattr(exam, "status") and exam.status in ["PUBLISHED", "CLOSED"]:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Đề thi đã được triển khai hoặc đã đóng. Vui lòng không xóa!"
         )
 
+    # 3. KIỂM TRA TRƯỚC: Xem đã có sinh viên tạo bài làm (Attempt) nào chưa
     has_attempt = db.exec(
         select(Attempt).where(Attempt.exam_id == exam_id)
     ).first()
@@ -141,11 +156,11 @@ def delete_exam_by_id(exam_id: UUID, db: Session = Depends(get_db)):
             detail="Đề thi đã có sinh viên làm bài, không thể xóa để bảo toàn dữ liệu!"
         )
 
+    # 4. CHỈ XÓA KHI ĐÃ QUA ĐƯỢC TẤT CẢ CÁC BƯỚC KIỂM TRA TRÊN
     db.delete(exam)
     db.commit()
 
     return {"message": "Xóa đề thi thành công."}
-
 
 # ===================================================================
 # 2. DANH SÁCH BÀI NỘP CỦA SINH VIÊN (SUBMISSIONS LIST)
@@ -169,18 +184,6 @@ def get_exam_submissions(
     )
     attempts = db.exec(statement).all()
 
-    # Truy vấn bảng "user" lấy username & email
-    user_map = {}
-    uids = list({att.user_id for att in attempts if att.user_id})
-    if uids:
-        try:
-            sql = text('SELECT user_id, username, email FROM "user" WHERE user_id = ANY(:uids)')
-            rows = db.execute(sql, {"uids": uids}).fetchall()
-            for r in rows:
-                user_map[str(r[0])] = {"username": r[1], "email": r[2]}
-        except Exception:
-            db.rollback()
-
     submissions = []
     for att in attempts:
         score_val = _get_attr(att, ["score", "total_score", "earned_score"], 0.0)
@@ -188,12 +191,7 @@ def get_exam_submissions(
         submitted_time = _get_attr(att, ["completed_at", "submitted_at", "ended_at", "started_at"])
 
         short_uid = str(att.user_id)[:8]
-        u_info = user_map.get(str(att.user_id), {})
-
-        username = u_info.get("username")
-        email = u_info.get("email") or f"student_{short_uid}@lumer.edu.vn"
-        display_name = username or f"Sinh viên #{short_uid}"
-
+        student_name = f"Sinh viên #{short_uid}"
         score_num = float(score_val) if score_val is not None else 0.0
         max_num = float(max_val) if max_val is not None else 10.0
 
@@ -203,12 +201,10 @@ def get_exam_submissions(
             "exam_id": str(att.exam_id),
             "user_id": str(att.user_id),
             "student_id": str(att.user_id),
-            "username": username or display_name,
-            "student_name": display_name,
-            "full_name": display_name,
-            "name": display_name,
-            "student_email": email,
-            "email": email,
+            "student_name": student_name,
+            "full_name": student_name,
+            "name": student_name,
+            "student_email": f"student_{short_uid}@lumer.edu.vn",
             "score": score_num,
             "total_score": score_num,
             "earned_score": score_num,
@@ -224,7 +220,7 @@ def get_exam_submissions(
 
 
 # ===================================================================
-# 3. CHI TIẾT 1 BÀI NỘP ĐỂ GIẢNG VIÊN CHẤM TAY
+# 3. CHI TIẾT 1 BÀI NỘP ĐỂ GIẢNG VIÊN CHẤM TAY (CHI TIẾT CÂU HỎI & BÀI LÀM)
 # ===================================================================
 
 @router.get("/{exam_id}/submissions/{attempt_id}")
@@ -241,22 +237,6 @@ def get_submission_detail_for_grading(
         raise HTTPException(status_code=404, detail="Không tìm thấy bài làm thi!")
 
     exam = crud_exam.get_by_id(db, exam_id=attempt.exam_id)
-
-    short_uid = str(attempt.user_id)[:8]
-    u_info = {}
-    if attempt.user_id:
-        try:
-            sql = text('SELECT username, email FROM "user" WHERE user_id = :uid')
-            row = db.execute(sql, {"uid": attempt.user_id}).fetchone()
-            if row:
-                u_info = {"username": row[0], "email": row[1]}
-        except Exception:
-            db.rollback()
-
-    username = u_info.get("username")
-    email = u_info.get("email") or f"student_{short_uid}@lumer.edu.vn"
-    display_name = username or f"Sinh viên #{short_uid}"
-
     answers = db.exec(
         select(AttemptAnswer).where(AttemptAnswer.attempt_id == attempt_id)
     ).all()
@@ -319,6 +299,8 @@ def get_submission_detail_for_grading(
     max_val = _get_attr(attempt, ["total_points", "max_score", "max_points"], 10.0)
     submitted_time = _get_attr(attempt, ["completed_at", "submitted_at", "ended_at", "started_at"])
 
+    short_uid = str(attempt.user_id)[:8]
+    student_name = f"Sinh viên #{short_uid}"
     score_num = float(score_val) if score_val is not None else 0.0
     max_num = float(max_val) if max_val is not None else 10.0
 
@@ -327,19 +309,15 @@ def get_submission_detail_for_grading(
         "attempt_id": str(attempt.attempt_id),
         "exam_id": str(attempt.exam_id),
         "exam_name": exam.exam_name if exam else "Bài thi",
-        "username": username or display_name,
-        "student_name": display_name,
-        "full_name": display_name,
-        "name": display_name,
-        "student_email": email,
-        "email": email,
+        "student_name": student_name,
+        "full_name": student_name,
+        "name": student_name,
+        "student_email": f"student_{short_uid}@lumer.edu.vn",
         "user_id": str(attempt.user_id),
         "student": {
             "id": str(attempt.user_id),
-            "username": username or display_name,
-            "full_name": display_name,
-            "name": display_name,
-            "email": email,
+            "full_name": student_name,
+            "name": student_name,
         },
         "score": score_num,
         "total_score": score_num,
