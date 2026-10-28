@@ -93,7 +93,10 @@ def update_exam_by_id(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    """Cập nhật thông tin đề thi."""
+    """
+    Cập nhật thông tin đề thi & chuyển đổi trạng thái (DRAFT / PUBLISHED / CLOSED).
+    Hỗ trợ cả PUT và PATCH từ Frontend.
+    """
     exam = crud_exam.get_by_id(db, exam_id)
     if not exam:
         raise HTTPException(status_code=404, detail="Không tìm thấy đề thi để cập nhật!")
@@ -145,7 +148,7 @@ def delete_exam_by_id(exam_id: UUID, db: Session = Depends(get_db)):
 
 
 # ===================================================================
-# 2. DANH SÁCH BÀI NỘP (TỰ ĐỘNG LẤY USERNAME & EMAIL TỪ BẢNG "user")
+# 2. DANH SÁCH BÀI NỘP CỦA SINH VIÊN (SUBMISSIONS LIST)
 # ===================================================================
 
 @router.get("/{exam_id}/submissions")
@@ -154,7 +157,7 @@ def get_exam_submissions(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    """Lấy danh sách các bài thi đã nộp kèm thông tin Username/Email."""
+    """Lấy danh sách các bài thi đã nộp của sinh viên theo đề thi."""
     exam = crud_exam.get_by_id(db, exam_id)
     if not exam:
         raise HTTPException(status_code=404, detail="Không tìm thấy đề thi!")
@@ -166,22 +169,17 @@ def get_exam_submissions(
     )
     attempts = db.exec(statement).all()
 
-    # Lấy danh sách user_id dạng string
-    user_ids = list({str(att.user_id) for att in attempts if att.user_id})
+    # Truy vấn bảng "user" lấy username & email
     user_map = {}
-
-    if user_ids:
+    uids = list({att.user_id for att in attempts if att.user_id})
+    if uids:
         try:
-            # Query an toàn 100% bằng IN + bindparams + ::text casting
-            sql = text('SELECT user_id::text, username, email FROM "user" WHERE user_id::text IN :uids').bindparams(expanding=True)
-            rows = db.execute(sql, {"uids": user_ids}).fetchall()
-            for row in rows:
-                user_map[str(row[0])] = {
-                    "username": row[1],
-                    "email": row[2]
-                }
+            sql = text('SELECT user_id, username, email FROM "user" WHERE user_id = ANY(:uids)')
+            rows = db.execute(sql, {"uids": uids}).fetchall()
+            for r in rows:
+                user_map[str(r[0])] = {"username": r[1], "email": r[2]}
         except Exception:
-            db.rollback()  # Khôi phục Session nếu có sự cố SQL
+            db.rollback()
 
     submissions = []
     for att in attempts:
@@ -226,7 +224,7 @@ def get_exam_submissions(
 
 
 # ===================================================================
-# 3. CHI TIẾT 1 BÀI NỘP DÙNG ĐỂ CHẤM BÀI
+# 3. CHI TIẾT 1 BÀI NỘP ĐỂ GIẢNG VIÊN CHẤM TAY
 # ===================================================================
 
 @router.get("/{exam_id}/submissions/{attempt_id}")
@@ -237,25 +235,24 @@ def get_submission_detail_for_grading(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    """Lấy chi tiết bài làm kèm câu hỏi và đáp án sinh viên."""
+    """Lấy chi tiết bài làm kèm câu hỏi và đáp án sinh viên để chấm bài."""
     attempt = crud_attempt.get_by_id(db, attempt_id)
     if not attempt:
         raise HTTPException(status_code=404, detail="Không tìm thấy bài làm thi!")
 
     exam = crud_exam.get_by_id(db, exam_id=attempt.exam_id)
 
-    # Lấy thông tin User an toàn bằng SQL direct
+    short_uid = str(attempt.user_id)[:8]
     u_info = {}
     if attempt.user_id:
         try:
-            sql = text('SELECT username, email FROM "user" WHERE user_id::text = :uid')
-            row = db.execute(sql, {"uid": str(attempt.user_id)}).fetchone()
+            sql = text('SELECT username, email FROM "user" WHERE user_id = :uid')
+            row = db.execute(sql, {"uid": attempt.user_id}).fetchone()
             if row:
                 u_info = {"username": row[0], "email": row[1]}
         except Exception:
-            db.rollback()  # Khôi phục Session nếu có sự cố SQL
+            db.rollback()
 
-    short_uid = str(attempt.user_id)[:8]
     username = u_info.get("username")
     email = u_info.get("email") or f"student_{short_uid}@lumer.edu.vn"
     display_name = username or f"Sinh viên #{short_uid}"
