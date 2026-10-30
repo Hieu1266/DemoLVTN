@@ -42,8 +42,8 @@ class CRUDAttempt:
             started_at=datetime.now(timezone.utc)
         )
         db.add(db_attempt)
-        db.commit()
-        db.refresh(db_attempt)
+        db.flush()               # INSERT trong cùng transaction
+        db.refresh(db_attempt)   # cùng transaction nên không phải xin kết nối mới
 
         raw_questions = db.exec(
             select(Question).where(Question.exam_id == exam.exam_id)
@@ -71,6 +71,7 @@ class CRUDAttempt:
                 )
             )
 
+        db.commit()              # một transaction duy nhất cho cả join
         return db_attempt, sanitized_questions
 
     def save_draft(self, db: Session, attempt: Attempt, answers: Any) -> Attempt:
@@ -83,7 +84,6 @@ class CRUDAttempt:
         _set_model_field(attempt, ["saved_answers", "draft_answers", "answers"], draft_dict or {})
         db.add(attempt)
         db.commit()
-        db.refresh(attempt)
         return attempt
 
     def process_submit(self, db: Session, attempt: Attempt, submit_data: Any) -> Attempt:
@@ -172,7 +172,6 @@ class CRUDAttempt:
 
         db.add(attempt)
         db.commit()
-        db.refresh(attempt)
         return attempt
 
     def get_user_history(self, db: Session, user_id: UUID) -> List[Attempt]:

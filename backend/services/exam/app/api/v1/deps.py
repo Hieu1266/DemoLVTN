@@ -11,11 +11,13 @@ security = HTTPBearer()
 
 
 def get_db() -> Generator[Session, None, None]:
-    with Session(engine) as session:
+    # expire_on_commit=False: sau commit vẫn đọc được thuộc tính mà không phải SELECT lại
+    # (SELECT lại = xin thêm một kết nối từ PgBouncer)
+    with Session(engine, expire_on_commit=False) as session:
         yield session
 
 
-def get_current_user(
+async def get_current_user(   # async: chỉ giải mã JWT (CPU nhẹ), khỏi tốn một lượt threadpool
     credentials: HTTPAuthorizationCredentials = Depends(security),
 ) -> Dict[str, Any]:
     token = credentials.credentials

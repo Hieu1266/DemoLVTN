@@ -139,7 +139,7 @@ def join_exam(
     active_attempt = next((a for a in user_attempts if a.status == "IN_PROGRESS"), None)
     if active_attempt:
         questions = crud_exam.get_exam_questions(db, exam_id=exam.exam_id)
-        return JoinExamResponse(
+        resp = JoinExamResponse(
             attempt_id=active_attempt.attempt_id,
             exam_name=exam.exam_name,
             duration_minutes=exam.duration_minutes,
@@ -149,6 +149,8 @@ def join_exam(
             saved_answers=_get_attr(active_attempt, ["saved_answers", "draft_answers"], {}) or {},
             questions=questions
         )
+        db.close()   # trả kết nối cho PgBouncer ngay, không chờ dependency dọn dẹp
+        return resp
 
     # Đếm các lượt thi đã hoàn thành
     completed_attempts = [a for a in user_attempts if a.status in ["COMPLETED", "NEEDS_GRADING", "SUBMITTED", "FINISHED"]]
@@ -166,7 +168,7 @@ def join_exam(
 
     # 5. Tạo lượt thi mới
     attempt, questions = crud_attempt.create_attempt(db, user_id=user_id, exam=exam)
-    return JoinExamResponse(
+    resp = JoinExamResponse(
         attempt_id=attempt.attempt_id,
         exam_name=exam.exam_name,
         duration_minutes=exam.duration_minutes,
@@ -176,6 +178,8 @@ def join_exam(
         saved_answers={},
         questions=questions
     )
+    db.close()
+    return resp
 
 
 # ===================================================================
@@ -319,7 +323,7 @@ def get_attempt_result(
     score_num = float(score_val) if score_val is not None else 0.0
     total_num = float(total_val) if total_val is not None else 10.0
 
-    return {
+    result = {
         "attempt_id": str(attempt.attempt_id),
         "exam_name": exam.exam_name if exam else "Bài thi",
         "score": score_num,
@@ -333,6 +337,8 @@ def get_attempt_result(
         "review_allowed": allow_review,
         "answers": detailed_answers if allow_review else None
     }
+    db.close()
+    return result
 
 
 @router.get("/{attempt_id}", response_model=JoinExamResponse)
@@ -349,7 +355,7 @@ def get_attempt_detail(
     questions = crud_exam.get_exam_questions(db, exam_id=attempt.exam_id)
     duration = exam.duration_minutes if exam else 60
 
-    return JoinExamResponse(
+    resp = JoinExamResponse(
         attempt_id=attempt.attempt_id,
         exam_name=exam.exam_name if exam else "Bài thi",
         duration_minutes=duration,
@@ -359,6 +365,8 @@ def get_attempt_detail(
         saved_answers=_get_attr(attempt, ["saved_answers", "draft_answers"], {}) or {},
         questions=questions
     )
+    db.close()
+    return resp
 
 
 @router.put("/{attempt_id}/draft")
@@ -374,6 +382,7 @@ def save_attempt_draft(
 
     answers = payload.get("answers", payload)
     crud_attempt.save_draft(db, attempt=attempt, answers=answers)
+    db.close()
     return {"status": "success", "message": "Đã lưu nháp thành công"}
 
 
@@ -393,4 +402,6 @@ def submit_exam(
     if str(attempt.user_id) != str(user_id):
         raise HTTPException(status_code=403, detail="Bạn không có quyền nộp bài thi này!")
 
-    return crud_attempt.process_submit(db, attempt=attempt, submit_data=submit_data)
+    result = crud_attempt.process_submit(db, attempt=attempt, submit_data=submit_data)
+    db.close()
+    return result
