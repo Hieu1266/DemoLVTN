@@ -42,9 +42,9 @@ spec:
         resources:
           requests:
             memory: "256Mi"
-            cpu: "350m"
+            cpu: "200m"
           limits:
-            memory: "1Gi"
+            memory: "512Mii"
             cpu: "1000m"
 ---
 apiVersion: v1
@@ -105,8 +105,8 @@ spec:
           periodSeconds: 5
         resources:
           requests:
-            memory: "512Mi"
-            cpu: "450m"
+            memory: "256MiMi"
+            cpu: "250m"
           limits:
             memory: "1Gi"
             cpu: "1500m"

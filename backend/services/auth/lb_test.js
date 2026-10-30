@@ -46,6 +46,27 @@ const PROFILES = {
     { duration: '2m', target: 500 },
     { duration: '30s', target: 0 },
   ],
+  lb1000: [
+    { duration: '1m', target: 1000 },
+    { duration: '3m', target: 1000 },
+    { duration: '30s', target: 0 },
+  ],
+  lb4000: [
+    { duration: '1m', target: 4000 },
+    { duration: '4m', target: 4000 },
+    { duration: '30s', target: 0 },
+  ],
+  lb10000: [
+    { duration: '1m', target: 10000 },
+    { duration: '5m', target: 10000 },
+    { duration: '30s', target: 0 },
+  ],
+  lb20000: [
+    { duration: '1m', target: 20000 },
+    { duration: '10m', target: 20000 },
+    { duration: '30s', target: 0 },
+  ],
+
 };
 
 function toSec(d) {
