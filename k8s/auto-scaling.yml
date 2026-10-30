@@ -7,7 +7,7 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: auth-service
-  minReplicas: 1
+  minReplicas: 2
   maxReplicas: 20
   metrics:
   - type: Resource
@@ -39,7 +39,7 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: exam-service
-  minReplicas: 1
+  minReplicas: 3
   maxReplicas: 20
   metrics:
   - type: Resource
@@ -106,7 +106,7 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: api-gateway
-  minReplicas: 2
+  minReplicas: 3
   maxReplicas: 30
   metrics:
   - type: Resource
