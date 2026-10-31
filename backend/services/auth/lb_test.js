@@ -37,13 +37,13 @@ const PROFILES = {
     { duration: '15s', target: 0 },
   ],
   lb100: [
-    { duration: '30s', target: 100 },
+    { duration: '15s', target: 100 },
     { duration: '1m', target: 100 },
     { duration: '30s', target: 0 },
   ],
   lb500: [
+    { duration: '30s', target: 500 },
     { duration: '1m', target: 500 },
-    { duration: '2m', target: 500 },
     { duration: '30s', target: 0 },
   ],
   lb1000: [
@@ -51,19 +51,29 @@ const PROFILES = {
     { duration: '3m', target: 1000 },
     { duration: '30s', target: 0 },
   ],
-  lb4000: [
+  lb3000: [
     { duration: '1m', target: 4000 },
-    { duration: '4m', target: 4000 },
+    { duration: '1m', target: 4000 },
     { duration: '30s', target: 0 },
   ],
-  lb10000: [
-    { duration: '1m', target: 10000 },
-    { duration: '5m', target: 10000 },
+  lb3005: [
+    { duration: '1m', target: 4000 },
+    { duration: '5m', target: 4000 },
     { duration: '30s', target: 0 },
   ],
-  lb20000: [
-    { duration: '1m', target: 20000 },
-    { duration: '10m', target: 20000 },
+  lb3010: [
+    { duration: '1m', target: 4000 },
+    { duration: '10m', target: 4000 },
+    { duration: '30s', target: 0 },
+  ],
+  lb3015: [
+    { duration: '1m', target: 4000 },
+    { duration: '15m', target: 4000 },
+    { duration: '30s', target: 0 },
+  ],
+  lb3020: [
+    { duration: '1m', target: 4000 },
+    { duration: '20m', target: 4000 },
     { duration: '30s', target: 0 },
   ],
 

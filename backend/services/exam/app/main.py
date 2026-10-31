@@ -6,6 +6,8 @@ from app.core.config import settings
 from app.core.database import init_db
 from app.api.v1.routers import api_router
 
+from app.pod_name_middleware import PodNameMiddleware
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -18,6 +20,7 @@ app = FastAPI(
     title="Exam Microservice",
     lifespan=lifespan
 )
+app.add_middleware(PodNameMiddleware)
 
 if settings.all_cors_origins():
     app.add_middleware(
