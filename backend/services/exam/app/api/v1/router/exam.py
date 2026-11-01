@@ -1,4 +1,5 @@
 import os
+import urllib.parse
 from typing import List, Dict, Any, Optional
 from uuid import UUID
 from datetime import datetime, timezone
@@ -8,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlmodel import Session, select
 from sqlalchemy import create_engine, text, func
 
+from app.core.config import settings
 from app.api.v1.deps import get_db, get_current_user
 from app.crud.crud_exam import crud_exam, parse_dt
 from app.crud.crud_attempt import crud_attempt
@@ -19,28 +21,88 @@ from app.models.question import Question
 router = APIRouter()
 
 # -------------------------------------------------------------------
-# KẾT NỐI PHỤ ĐẾN DATABASE users_ssl_db ĐỂ TRUY VẤN THÔNG TIN USER
+# KẾT NỐI PHỤ ĐẾN DATABASE users_ssl_db
 # -------------------------------------------------------------------
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@postgres:5432/exams_ssl_db")
-USER_DB_URL = DATABASE_URL.rsplit('/', 1)[0] + "/users_ssl_db"
-user_db_engine = create_engine(USER_DB_URL, pool_pre_ping=True)
+def _get_user_db_engine():
+    """Lấy URL CSDL thực tế từ settings và đổi tên CSDL thành users_ssl_db."""
+    raw_url = (
+        getattr(settings, "EXAM_DB_URL", None)
+        or getattr(settings, "DATABASE_URL", None)
+        or os.getenv("EXAM_DB_URL")
+        or os.getenv("DATABASE_URL")
+        or "postgresql://postgres:postgres@postgres:5432/exams_ssl_db"
+    )
+    try:
+        parsed = urllib.parse.urlparse(raw_url)
+        user_parsed = parsed._replace(path="/users_ssl_db")
+        user_db_url = urllib.parse.urlunparse(user_parsed)
+        return create_engine(user_db_url, pool_pre_ping=True)
+    except Exception as e:
+        print(f"⚠️ [USER_DB] Không thể tạo URL engine kết nối users_ssl_db: {e}", flush=True)
+        return None
+
+user_db_engine = _get_user_db_engine()
 
 
 def _get_users_map_from_db(user_ids: List[UUID]) -> Dict[str, Dict[str, Any]]:
-    """Truy vấn trực tiếp bảng 'user' trên CSDL users_ssl_db."""
+    """Truy vấn trực tiếp CSDL users_ssl_db kèm Fallback HTTP sang auth-service."""
     user_map = {}
     if not user_ids:
         return user_map
 
     valid_uids = list({str(uid) for uid in user_ids if uid})
-    try:
-        with user_db_engine.connect() as conn:
-            sql = text('SELECT user_id::text, username, email FROM "user" WHERE user_id = ANY(:uids::uuid[])')
-            rows = conn.execute(sql, {"uids": valid_uids}).fetchall()
-            for r in rows:
-                user_map[str(r[0])] = {"username": r[1], "email": r[2]}
-    except Exception as e:
-        print(f"⚠️ Lỗi truy vấn CSDL users_ssl_db: {e}")
+    if not valid_uids:
+        return user_map
+
+    # 1. TRUY VẤN TRỰC TIẾP CSDL users_ssl_db
+    if user_db_engine:
+        try:
+            formatted_uids = ", ".join([f"'{uid}'" for uid in valid_uids])
+            queries = [
+                f'SELECT user_id::text, username, email FROM "user" WHERE user_id::text IN ({formatted_uids})',
+                f'SELECT id::text, username, email FROM "user" WHERE id::text IN ({formatted_uids})',
+                f'SELECT user_id::text, username, email FROM users WHERE user_id::text IN ({formatted_uids})',
+                f'SELECT id::text, username, email FROM users WHERE id::text IN ({formatted_uids})',
+            ]
+            with user_db_engine.connect() as conn:
+                for q in queries:
+                    try:
+                        rows = conn.execute(text(q)).fetchall()
+                        if rows:
+                            for r in rows:
+                                uid_str = str(r[0])
+                                user_map[uid_str] = {
+                                    "username": r[1],
+                                    "email": r[2] or f"student_{uid_str[:8]}@lumer.edu.vn"
+                                }
+                            print(f"✅ [USER_DB] Lấy thành công {len(user_map)} users từ DB!", flush=True)
+                            return user_map
+                    except Exception:
+                        pass
+        except Exception as e:
+            print(f"⚠️ [USER_DB] Lỗi truy vấn users_ssl_db: {e}", flush=True)
+
+    # 2. FALLBACK: GỌI HTTP SANG AUTH SERVICE NẾU SQL THẤT BẠI
+    import urllib.request
+    import json
+
+    auth_url = os.getenv("BACKEND_USER_URL", "http://auth-service:8000").rstrip("/")
+    for uid_str in valid_uids:
+        for ep in [f"/api/v1/users/{uid_str}", f"/users/{uid_str}"]:
+            try:
+                req = urllib.request.Request(f"{auth_url}{ep}", headers={"Content-Type": "application/json"})
+                with urllib.request.urlopen(req, timeout=2) as resp:
+                    if resp.status == 200:
+                        data = json.loads(resp.read().decode())
+                        uname = data.get("username")
+                        if uname:
+                            user_map[uid_str] = {
+                                "username": uname,
+                                "email": data.get("email") or f"student_{uid_str[:8]}@lumer.edu.vn"
+                            }
+                            break
+            except Exception:
+                pass
 
     return user_map
 
