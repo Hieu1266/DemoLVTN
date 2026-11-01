@@ -36,6 +36,11 @@ const PROFILES = {
     { duration: '30s', target: 1 },
     { duration: '15s', target: 0 },
   ],
+  lb50: [
+    { duration: '15s', target: 50 },
+    { duration: '1m', target: 50 },
+    { duration: '30s', target: 0 },
+  ],
   lb100: [
     { duration: '15s', target: 100 },
     { duration: '1m', target: 100 },
@@ -43,7 +48,7 @@ const PROFILES = {
   ],
   lb500: [
     { duration: '30s', target: 500 },
-    { duration: '1m', target: 500 },
+    { duration: '5m', target: 500 },
     { duration: '30s', target: 0 },
   ],
   lb1000: [
@@ -52,8 +57,8 @@ const PROFILES = {
     { duration: '30s', target: 0 },
   ],
   lb3000: [
-    { duration: '1m', target: 4000 },
-    { duration: '1m', target: 4000 },
+    { duration: '1m', target: 2000 },
+    { duration: '5m', target: 2000 },
     { duration: '30s', target: 0 },
   ],
   lb3005: [

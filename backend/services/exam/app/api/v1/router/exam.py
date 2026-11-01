@@ -1,12 +1,15 @@
+import math
+import re
 from typing import List, Dict, Any, Optional
 from uuid import UUID
 from datetime import datetime, timezone
 from decimal import Decimal
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import String, cast, func
 from sqlmodel import Session, select
 
 from app.api.v1.deps import get_db, get_current_user
-from app.crud.crud_exam import crud_exam, parse_dt
+from app.crud.crud_exam import crud_exam, parse_dt, normalize_max_attempts
 from app.crud.crud_attempt import crud_attempt
 from app.models.exam import Exam
 from app.models.attempt import Attempt
@@ -36,107 +39,6 @@ def _set_model_field(obj: Any, candidates: List[str], value: Any) -> Optional[st
     return None
 
 
-def _get_users_map(db: Session, user_ids: List[UUID], auth_header: Optional[str] = None) -> Dict[str, Dict[str, Any]]:
-    user_map = {}
-    if not user_ids:
-        return user_map
-
-    str_ids = {str(uid) for uid in user_ids}
-
-    # -------------------------------------------------------------------
-    # 1. TRUY VẤN CƠ SỞ DỮ LIỆU (Thử tất cả các cấu trúc bảng & cột)
-    # -------------------------------------------------------------------
-    from sqlalchemy import text
-
-    queries = [
-        'SELECT id::text, username, email, full_name FROM "user"',
-        'SELECT id::text, username, email, full_name FROM users',
-        'SELECT id::text, username, email, username FROM "user"',
-        'SELECT id::text, username, email, username FROM users',
-        'SELECT user_id::text, username, email, full_name FROM "user"',
-        'SELECT user_id::text, username, email, full_name FROM users',
-    ]
-
-    for q in queries:
-        try:
-            res = db.execute(text(q)).fetchall()
-            if res:
-                for row in res:
-                    uid_str = str(row[0])
-                    user_map[uid_str] = {
-                        "username": row[1],
-                        "email": row[2] or "",
-                        "full_name": row[3] or row[1],
-                    }
-                print(f"✅ [DEBUG] Lấy thành công {len(user_map)} users từ DB bằng query: {q}")
-                if str_ids.issubset(set(user_map.keys())):
-                    return user_map
-        except Exception:
-            db.rollback()  # Bắt buộc rollback để tránh hỏng transaction SQLAlchemy
-
-    # -------------------------------------------------------------------
-    # 2. GỌI HTTP SANG AUTH SERVICE (Port 8000) NẾU TÁCH DB MICROSERVICES
-    # -------------------------------------------------------------------
-    import urllib.request
-    import json
-    import os
-
-    auth_base_url = os.getenv("AUTH_SERVICE_URL", "http://localhost:8000/api/v1")
-    headers = {"Content-Type": "application/json"}
-    if auth_header:
-        headers["Authorization"] = auth_header
-
-    # Thử lấy toàn bộ danh sách User từ Auth Service
-    list_endpoints = ["/users/", "/users", "/user/", "/user"]
-    for ep in list_endpoints:
-        try:
-            url = f"{auth_base_url}{ep}"
-            req = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(req, timeout=2) as response:
-                if response.status == 200:
-                    data = json.loads(response.read().decode())
-                    if isinstance(data, list):
-                        for u in data:
-                            uid = str(u.get("id") or u.get("user_id") or "")
-                            if uid:
-                                user_map[uid] = {
-                                    "username": u.get("username"),
-                                    "full_name": u.get("full_name") or u.get("first_name") or u.get("username"),
-                                    "email": u.get("email"),
-                                }
-                        print(f"✅ [DEBUG] Lấy thành công {len(user_map)} users từ Auth API List: {url}")
-                        if str_ids.issubset(set(user_map.keys())):
-                            return user_map
-        except Exception as e:
-            print(f"⚠️ [DEBUG] Lỗi gọi Auth API List ({ep}): {e}")
-
-    # Thử lấy chi tiết từng User nếu danh sách trên chưa có
-    for uid_str in str_ids:
-        if uid_str in user_map:
-            continue
-        detail_endpoints = [f"/users/{uid_str}", f"/users/id/{uid_str}", f"/users/by-id/{uid_str}"]
-        for ep in detail_endpoints:
-            try:
-                url = f"{auth_base_url}{ep}"
-                req = urllib.request.Request(url, headers=headers)
-                with urllib.request.urlopen(req, timeout=2) as response:
-                    if response.status == 200:
-                        data = json.loads(response.read().decode())
-                        user_map[uid_str] = {
-                            "username": data.get("username"),
-                            "full_name": data.get("full_name") or data.get("first_name") or data.get("username"),
-                            "email": data.get("email"),
-                        }
-                        print(f"✅ [DEBUG] Lấy user {uid_str} từ Auth API Detail: {url}")
-                        break
-            except Exception as e:
-                print(f"⚠️ [DEBUG] Lỗi gọi Auth API Detail ({ep}): {e}")
-
-    return user_map
-# ===================================================================
-# 1. QUẢN LÝ ĐỀ THI (CRUD)
-# ===================================================================
-
 # ===================================================================
 # 1. QUẢN LÝ ĐỀ THI (CRUD)
 # ===================================================================
@@ -147,24 +49,13 @@ def get_all_exams(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    """Lấy danh sách đề thi (Tự động phân quyền: Admin thấy hết, Giảng viên chỉ thấy đề của mình)."""
-    user_id_str = current_user.get("user_id") or current_user.get("id") or current_user.get("sub")
-    role = str(current_user.get("role") or current_user.get("role_id") or "").upper()
-
-    # Nếu người dùng là Giảng viên (INSTRUCTOR), lọc danh sách theo user_id
-    if role == "INSTRUCTOR" and user_id_str:
-        try:
-            uid = UUID(str(user_id_str))
-            return crud_exam.get_instructor_exams(db, instructor_id=uid)
-        except (ValueError, TypeError):
-            pass
-
-    # Nếu là ADMIN hoặc trường hợp khác, lấy toàn bộ danh sách
+    """Lấy danh sách tất cả đề thi."""
     statement = select(Exam)
     if hasattr(Exam, "created_at"):
         statement = statement.order_by(Exam.created_at.desc())
     exams = db.exec(statement).all()
     return exams
+
 
 @router.post("", response_model=None)
 @router.post("/")
@@ -196,6 +87,10 @@ def get_exam_by_id(
     return exam_dict
 
 
+# ===================================================================
+# [BỔ SUNG MỚI] CẬP NHẬT & XÓA ĐỀ THI (SỬA LỖI 405 METHOD NOT ALLOWED)
+# ===================================================================
+
 @router.put("/{exam_id}")
 @router.patch("/{exam_id}")
 def update_exam_by_id(
@@ -206,17 +101,22 @@ def update_exam_by_id(
 ):
     """
     Cập nhật thông tin đề thi & chuyển đổi trạng thái (DRAFT / PUBLISHED / CLOSED).
+    Hỗ trợ cả PUT và PATCH từ Frontend.
     """
     exam = crud_exam.get_by_id(db, exam_id)
     if not exam:
         raise HTTPException(status_code=404, detail="Không tìm thấy đề thi để cập nhật!")
 
+    # Cập nhật linh hoạt các trường trong model Exam
     for key, value in payload.items():
         if hasattr(exam, key):
             if key in ("start_at", "end_at"):
-                value = parse_dt(value)
+                value = parse_dt(value)  # chuỗi ISO từ frontend -> datetime
+            elif key == "max_attempts":
+                value = normalize_max_attempts(value)
             setattr(exam, key, value)
             
+    # Cập nhật thời gian chỉnh sửa
     if hasattr(exam, "updated_at"):
         setattr(exam, "updated_at", datetime.now(timezone.utc))
 
@@ -225,9 +125,17 @@ def update_exam_by_id(
     db.refresh(exam)
     return exam
 
+from uuid import UUID
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlmodel import Session, select
+
+# ⚠️ LƯU Ý: Đảm bảo import đúng đường dẫn tới model Attempt và Exam của bạn
+from app.models.exam import Exam
+from app.models.attempt import Attempt  # Chỉnh lại đường dẫn nếu file attempt.py nằm chỗ khác
 
 @router.delete("/{exam_id}")
 def delete_exam_by_id(exam_id: UUID, db: Session = Depends(get_db)):
+    # 1. Tìm đề thi trong CSDL
     exam = db.get(Exam, exam_id)
     if not exam:
         raise HTTPException(
@@ -235,12 +143,14 @@ def delete_exam_by_id(exam_id: UUID, db: Session = Depends(get_db)):
             detail="Không tìm thấy đề thi."
         )
 
+    # 2. KIỂM TRA TRƯỚC: Nếu đề thi đã PUBLISHED hoặc CLOSED -> Chặn ngay
     if hasattr(exam, "status") and exam.status in ["PUBLISHED", "CLOSED"]:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Đề thi đã được triển khai hoặc đã đóng. Vui lòng không xóa!"
         )
 
+    # 3. KIỂM TRA TRƯỚC: Xem đã có sinh viên tạo bài làm (Attempt) nào chưa
     has_attempt = db.exec(
         select(Attempt).where(Attempt.exam_id == exam_id)
     ).first()
@@ -251,87 +161,136 @@ def delete_exam_by_id(exam_id: UUID, db: Session = Depends(get_db)):
             detail="Đề thi đã có sinh viên làm bài, không thể xóa để bảo toàn dữ liệu!"
         )
 
+    # 4. CHỈ XÓA KHI ĐÃ QUA ĐƯỢC TẤT CẢ CÁC BƯỚC KIỂM TRA TRÊN
     db.delete(exam)
     db.commit()
 
     return {"message": "Xóa đề thi thành công."}
 
-
 # ===================================================================
 # 2. DANH SÁCH BÀI NỘP CỦA SINH VIÊN (SUBMISSIONS LIST)
 # ===================================================================
 
+# Nhóm trạng thái dùng để lọc danh sách bài nộp
+NEEDS_GRADING_STATUSES = ("NEEDS_GRADING", "SUBMITTED")
+DONE_STATUSES = ("COMPLETED", "FINISHED", "GRADED")
+SUBMISSION_SORTS = {
+    "submitted_at": Attempt.submitted_at,
+    "started_at": Attempt.started_at,
+    "total_score": Attempt.total_score,
+}
+
+
 @router.get("/{exam_id}/submissions")
 def get_exam_submissions(
     exam_id: UUID,
+    page: int = Query(1, ge=1, description="Trang (bắt đầu từ 1)"),
+    page_size: int = Query(50, ge=1, le=200, description="Số bài mỗi trang (tối đa 200)"),
+    status_filter: Optional[str] = Query(
+        None, alias="status",
+        description="needs_grading | done | <mã trạng thái chính xác>",
+    ),
+    q: Optional[str] = Query(None, max_length=64, description="Tìm theo mã sinh viên (đầu chuỗi UUID)"),
+    sort: str = Query("submitted_at", description="submitted_at | started_at | total_score"),
+    order: str = Query("desc", description="asc | desc"),
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    """Lấy danh sách các bài thi đã nộp của sinh viên theo đề thi."""
+    """Danh sách bài nộp của một đề thi, có phân trang, lọc và sắp xếp phía server.
+
+    Chỉ đọc các cột cần cho danh sách (không đọc draft_answers, cột JSONB nặng nhất).
+    """
     exam = crud_exam.get_by_id(db, exam_id)
     if not exam:
         raise HTTPException(status_code=404, detail="Không tìm thấy đề thi!")
 
-    statement = (
-        select(Attempt)
-        .where(Attempt.exam_id == exam_id, Attempt.status != "IN_PROGRESS")
-        .order_by(Attempt.started_at.desc())
-    )
-    attempts = db.exec(statement).all()
+    base = [Attempt.exam_id == exam_id, Attempt.status != "IN_PROGRESS"]
+    conditions = list(base)
 
-    # Truy vấn danh sách người dùng để lấy username thật
-    user_ids = [att.user_id for att in attempts if att.user_id]
-    user_map = _get_users_map(db, user_ids)
+    if status_filter:
+        key = status_filter.strip().lower()
+        if key == "needs_grading":
+            conditions.append(Attempt.status.in_(NEEDS_GRADING_STATUSES))
+        elif key == "done":
+            conditions.append(Attempt.status.in_(DONE_STATUSES))
+        elif key != "all":
+            conditions.append(Attempt.status == status_filter.strip().upper())
 
-    submissions = []
-    for att in attempts:
-        score_val = _get_attr(att, ["score", "total_score", "earned_score"], 0.0)
-        max_val = _get_attr(att, ["total_points", "max_score", "max_points"], 10.0)
-        submitted_time = _get_attr(att, ["completed_at", "submitted_at", "ended_at", "started_at"])
+    q_clean = re.sub(r"[^0-9a-fA-F-]", "", q or "").lower()
+    if q_clean:
+        conditions.append(cast(Attempt.user_id, String).like(f"{q_clean}%"))
 
-        short_uid = str(att.user_id)[:8]
-        u_info = user_map.get(str(att.user_id), {})
-        
-        uname = u_info.get("username")
-        fname = u_info.get("full_name")
-        uemail = u_info.get("email")
+    # Tổng hợp cho cả đề (không phụ thuộc bộ lọc): hiển thị huy hiệu "cần chấm"
+    all_total, needs_total = db.exec(
+        select(
+            func.count(),
+            func.count().filter(Attempt.status.in_(NEEDS_GRADING_STATUSES)),
+        )
+        .select_from(Attempt)
+        .where(*base)
+    ).one()
 
-        default_name = f"Sinh viên #{short_uid}"
-        student_name = fname or uname or default_name
-        username = uname or student_name
-        student_email = uemail or f"student_{short_uid}@lumer.edu.vn"
+    has_filter = len(conditions) != len(base)
+    if has_filter:
+        total = db.exec(select(func.count()).select_from(Attempt).where(*conditions)).one()
+    else:
+        total = all_total
 
-        score_num = float(score_val) if score_val is not None else 0.0
-        max_num = float(max_val) if max_val is not None else 10.0
+    total_pages = max(1, math.ceil(total / page_size))
+    page = min(page, total_pages)
 
-        submissions.append({
-            "id": str(att.attempt_id),
-            "attempt_id": str(att.attempt_id),
-            "exam_id": str(att.exam_id),
-            "user_id": str(att.user_id),
-            "student_id": str(att.user_id),
-            "username": username,
+    sort_col = SUBMISSION_SORTS.get(sort, Attempt.submitted_at)
+    direction = sort_col.asc() if order.lower() == "asc" else sort_col.desc()
+
+    rows = db.exec(
+        select(
+            Attempt.attempt_id,
+            Attempt.exam_id,
+            Attempt.user_id,
+            Attempt.status,
+            Attempt.started_at,
+            Attempt.submitted_at,
+            Attempt.total_score,
+        )
+        .where(*conditions)
+        .order_by(direction.nulls_last(), Attempt.attempt_id.desc())  # attempt_id: giữ thứ tự ổn định
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    ).all()
+
+    items = []
+    for r in rows:
+        short_uid = str(r.user_id)[:8]
+        student_name = f"Sinh viên #{short_uid}"
+        score_num = float(r.total_score) if r.total_score is not None else 0.0
+        submitted_time = r.submitted_at or r.started_at
+        items.append({
+            "id": str(r.attempt_id),
+            "attempt_id": str(r.attempt_id),
+            "exam_id": str(r.exam_id),
+            "user_id": str(r.user_id),
+            "student_id": str(r.user_id),
             "student_name": student_name,
-            "full_name": student_name,
-            "name": student_name,
-            "student_email": student_email,
-            "email": student_email,
+            "student_email": f"student_{short_uid}@lumer.edu.vn",
             "score": score_num,
-            "total_score": score_num,
-            "earned_score": score_num,
-            "final_score": score_num,
-            "max_score": max_num,
-            "total_points": max_num,
-            "status": att.status,
+            "max_score": 10.0,
+            "status": r.status,
+            "started_at": r.started_at,
             "submitted_at": submitted_time,
-            "completed_at": submitted_time,
         })
 
-    return submissions
+    return {
+        "items": items,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": total_pages,
+        "summary": {"total_submitted": all_total, "needs_grading": needs_total},
+    }
 
 
 # ===================================================================
-# 3. CHI TIẾT 1 BÀI NỘP ĐỂ GIẢNG VIÊN CHẤM TAY
+# 3. CHI TIẾT 1 BÀI NỘP ĐỂ GIẢNG VIÊN CHẤM TAY (CHI TIẾT CÂU HỎI & BÀI LÀM)
 # ===================================================================
 
 @router.get("/{exam_id}/submissions/{attempt_id}")
@@ -410,20 +369,8 @@ def get_submission_detail_for_grading(
     max_val = _get_attr(attempt, ["total_points", "max_score", "max_points"], 10.0)
     submitted_time = _get_attr(attempt, ["completed_at", "submitted_at", "ended_at", "started_at"])
 
-    # Lấy thông tin user
-    u_map = _get_users_map(db, [attempt.user_id] if attempt.user_id else [])
-    u_info = u_map.get(str(attempt.user_id), {})
-
     short_uid = str(attempt.user_id)[:8]
-    uname = u_info.get("username")
-    fname = u_info.get("full_name")
-    uemail = u_info.get("email")
-
-    default_name = f"Sinh viên #{short_uid}"
-    student_name = fname or uname or default_name
-    username = uname or student_name
-    student_email = uemail or f"student_{short_uid}@lumer.edu.vn"
-
+    student_name = f"Sinh viên #{short_uid}"
     score_num = float(score_val) if score_val is not None else 0.0
     max_num = float(max_val) if max_val is not None else 10.0
 
@@ -432,19 +379,15 @@ def get_submission_detail_for_grading(
         "attempt_id": str(attempt.attempt_id),
         "exam_id": str(attempt.exam_id),
         "exam_name": exam.exam_name if exam else "Bài thi",
-        "username": username,
         "student_name": student_name,
         "full_name": student_name,
         "name": student_name,
-        "student_email": student_email,
-        "email": student_email,
+        "student_email": f"student_{short_uid}@lumer.edu.vn",
         "user_id": str(attempt.user_id),
         "student": {
             "id": str(attempt.user_id),
-            "username": username,
             "full_name": student_name,
             "name": student_name,
-            "email": student_email,
         },
         "score": score_num,
         "total_score": score_num,
@@ -502,12 +445,7 @@ def grade_submission(
 
         if q_id in grades and ans:
             grade_item = grades[q_id]
-            raw_earned = Decimal(str(grade_item.get("earned_points", grade_item.get("score", 0))))
-            
-            # 🔴 CHẶN LỖI: Điểm chấm không được nhỏ hơn 0 và không được vượt quá điểm tối đa của câu hỏi (q.points)
-            max_q_pts = Decimal(str(q.points if q.points is not None else 1.0))
-            earned = min(max_q_pts, max(Decimal("0.00"), raw_earned))
-
+            earned = Decimal(str(grade_item.get("earned_points", grade_item.get("score", 0))))
             is_corr = grade_item.get("is_correct", True if earned > 0 else False)
 
             _set_model_field(ans, ["earned_points", "points_earned", "score"], earned)
@@ -520,8 +458,7 @@ def grade_submission(
 
     if total_possible_raw > Decimal("0.00"):
         scaled_score = (total_earned_raw / total_possible_raw) * Decimal("10.00")
-        # 🔴 CHẶN LỖI: Điểm tổng thang 10 không bao giờ vượt quá 10.00
-        scaled_score = min(Decimal("10.00"), max(Decimal("0.00"), round(scaled_score, 2)))
+        scaled_score = round(scaled_score, 2)
     else:
         scaled_score = Decimal("0.00")
 

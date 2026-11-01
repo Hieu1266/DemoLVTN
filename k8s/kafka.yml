@@ -1,1 +1,231 @@
-#kafka || Message Queue
+# ==========================================================================
+# KAFKA (KRaft, 1 broker kiêm controller) - dành cho cụm 1 node Docker Desktop
+#
+# Triển khai:   kubectl apply -n ssl -f k8s/kafka.yml
+# Bootstrap cho ứng dụng trong cụm:   kafka:9092
+#
+# Giới hạn cần biết:
+#  - 1 broker => replication-factor = 1: KHÔNG chịu được lỗi broker (không dùng để chứng minh HA).
+#  - PLAINTEXT, không xác thực: chỉ dùng nội bộ trong cụm, không mở NodePort.
+# ==========================================================================
+
+# --------------------------------------------------------------------------
+# 1. Service headless: cho DNS ổn định kafka-0.kafka-headless (StatefulSet + controller quorum)
+# --------------------------------------------------------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka-headless
+  labels:
+    app: kafka
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true   # DNS phải phân giải được ngay cả khi pod chưa Ready (controller tự tìm mình)
+  selector:
+    app: kafka
+  ports:
+  - name: broker
+    port: 9092
+  - name: controller
+    port: 9093
+---
+# --------------------------------------------------------------------------
+# 2. Service cho client: bootstrap qua kafka:9092
+# --------------------------------------------------------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka
+  labels:
+    app: kafka
+spec:
+  type: ClusterIP
+  selector:
+    app: kafka
+  ports:
+  - name: broker
+    port: 9092
+    targetPort: 9092
+---
+# --------------------------------------------------------------------------
+# 3. Broker (StatefulSet, dữ liệu nằm trên PVC)
+# --------------------------------------------------------------------------
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: kafka
+  labels:
+    app: kafka
+spec:
+  serviceName: kafka-headless
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kafka
+  template:
+    metadata:
+      labels:
+        app: kafka
+    spec:
+      terminationGracePeriodSeconds: 60
+
+      # PVC kiểu hostpath thường thuộc root; image Kafka chạy bằng user 1000 nên cần cấp quyền ghi
+      initContainers:
+      - name: fix-permissions
+        image: apache/kafka:4.3.0
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          runAsUser: 0
+        command: ["sh", "-c", "chown -R 1000:1000 /var/lib/kafka/data"]
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/kafka/data
+
+      containers:
+      - name: kafka
+        image: apache/kafka:4.3.0
+        imagePullPolicy: IfNotPresent   # tránh phụ thuộc Docker Hub mỗi lần pod khởi động lại
+        ports:
+        - name: broker
+          containerPort: 9092
+        - name: controller
+          containerPort: 9093
+        env:
+        # Hai biến này phải đứng TRƯỚC các biến dùng $(...) bên dưới
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+
+        # --- KRaft ---
+        - name: CLUSTER_ID
+          value: "B54jTXpMR5-1tGH3czQsqA"
+        - name: KAFKA_NODE_ID
+          value: "1"
+        - name: KAFKA_PROCESS_ROLES
+          value: "broker,controller"
+        - name: KAFKA_CONTROLLER_QUORUM_VOTERS
+          value: "1@kafka-0.kafka-headless.$(POD_NAMESPACE).svc.cluster.local:9093"
+        - name: KAFKA_CONTROLLER_LISTENER_NAMES
+          value: "CONTROLLER"
+
+        # --- Listener ---
+        - name: KAFKA_LISTENERS
+          value: "PLAINTEXT://:9092,CONTROLLER://:9093"
+        - name: KAFKA_ADVERTISED_LISTENERS
+          value: "PLAINTEXT://$(POD_NAME).kafka-headless.$(POD_NAMESPACE).svc.cluster.local:9092"
+        - name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP
+          value: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"
+        - name: KAFKA_INTER_BROKER_LISTENER_NAME
+          value: "PLAINTEXT"
+
+        # --- 1 broker: các topic hệ thống chỉ có thể có 1 bản sao ---
+        - name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR
+          value: "1"
+        - name: KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR
+          value: "1"
+        - name: KAFKA_TRANSACTION_STATE_LOG_MIN_ISR
+          value: "1"
+        - name: KAFKA_SHARE_COORDINATOR_STATE_TOPIC_REPLICATION_FACTOR
+          value: "1"
+        - name: KAFKA_SHARE_COORDINATOR_STATE_TOPIC_MIN_ISR
+          value: "1"
+        - name: KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS
+          value: "0"
+
+        # --- Dữ liệu và vòng đời ---
+        - name: KAFKA_LOG_DIRS
+          value: "/var/lib/kafka/data"
+        - name: KAFKA_AUTO_CREATE_TOPICS_ENABLE
+          value: "false"          # topic tạo bằng Job bên dưới, tránh tạo nhầm khi gõ sai tên
+        - name: KAFKA_NUM_PARTITIONS
+          value: "6"
+        - name: KAFKA_LOG_RETENTION_HOURS
+          value: "48"
+
+        # --- Bộ nhớ JVM (mặc định 1 GB là quá lớn cho máy dùng chung) ---
+        - name: KAFKA_HEAP_OPTS
+          value: "-Xms512m -Xmx512m"
+
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/kafka/data
+        readinessProbe:
+          tcpSocket:
+            port: 9092
+          initialDelaySeconds: 20
+          periodSeconds: 10
+        livenessProbe:
+          tcpSocket:
+            port: 9092
+          initialDelaySeconds: 90
+          periodSeconds: 20
+          failureThreshold: 6
+        resources:
+          requests:
+            memory: "768Mi"
+            cpu: "250m"
+          limits:
+            memory: "1280Mi"
+            cpu: "1000m"
+
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 5Gi
+---
+# --------------------------------------------------------------------------
+# 4. Job tạo topic (chạy lại nhiều lần vẫn an toàn nhờ --if-not-exists)
+#    Sửa danh sách topic ở khối "create ..." bên dưới theo thiết kế của bạn.
+# --------------------------------------------------------------------------
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kafka-create-topics
+spec:
+  ttlSecondsAfterFinished: 600     # tự xóa sau khi xong để lần deploy sau tạo lại, tránh lỗi Job bất biến
+  backoffLimit: 5
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: create-topics
+        image: apache/kafka:4.3.0
+        imagePullPolicy: IfNotPresent
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          set -e
+          BIN=/opt/kafka/bin
+          BS=kafka:9092
+
+          echo "Chờ Kafka sẵn sàng..."
+          until $BIN/kafka-broker-api-versions.sh --bootstrap-server $BS >/dev/null 2>&1; do
+            sleep 3
+          done
+
+          # create <tên> <số partition> [--config k=v ...]
+          create() {
+            name=$1; parts=$2; shift 2
+            $BIN/kafka-topics.sh --bootstrap-server $BS --create --if-not-exists \
+              --topic "$name" --partitions "$parts" --replication-factor 1 "$@"
+          }
+
+          # Trạng thái "mới nhất theo khóa" (khóa = attempt_id hoặc user+video): log compaction
+          create answer-draft   6 --config cleanup.policy=compact --config min.cleanable.dirty.ratio=0.1
+          create video-progress 6 --config cleanup.policy=compact --config min.cleanable.dirty.ratio=0.1
+          # Bài nộp: giữ 7 ngày để phát lại khi worker lỗi
+          create exam-submit    6 --config retention.ms=604800000
+          # Log ứng dụng: giữ 1 ngày
+          create app-log        3 --config retention.ms=86400000
+
+          echo "Danh sách topic:"
+          $BIN/kafka-topics.sh --bootstrap-server $BS --list
