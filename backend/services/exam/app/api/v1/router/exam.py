@@ -1,10 +1,12 @@
+import os
 from typing import List, Dict, Any, Optional
 from uuid import UUID
 from datetime import datetime, timezone
 from decimal import Decimal
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlmodel import Session, select
-from sqlalchemy import text, func
+from sqlalchemy import create_engine, text, func
 
 from app.api.v1.deps import get_db, get_current_user
 from app.crud.crud_exam import crud_exam, parse_dt
@@ -15,6 +17,32 @@ from app.models.attempt_answer import AttemptAnswer
 from app.models.question import Question
 
 router = APIRouter()
+
+# -------------------------------------------------------------------
+# KẾT NỐI PHỤ ĐẾN DATABASE users_ssl_db ĐỂ TRUY VẤN THÔNG TIN USER
+# -------------------------------------------------------------------
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@postgres:5432/exams_ssl_db")
+USER_DB_URL = DATABASE_URL.rsplit('/', 1)[0] + "/users_ssl_db"
+user_db_engine = create_engine(USER_DB_URL, pool_pre_ping=True)
+
+
+def _get_users_map_from_db(user_ids: List[UUID]) -> Dict[str, Dict[str, Any]]:
+    """Truy vấn trực tiếp bảng 'user' trên CSDL users_ssl_db."""
+    user_map = {}
+    if not user_ids:
+        return user_map
+
+    valid_uids = list({str(uid) for uid in user_ids if uid})
+    try:
+        with user_db_engine.connect() as conn:
+            sql = text('SELECT user_id::text, username, email FROM "user" WHERE user_id = ANY(:uids::uuid[])')
+            rows = conn.execute(sql, {"uids": valid_uids}).fetchall()
+            for r in rows:
+                user_map[str(r[0])] = {"username": r[1], "email": r[2]}
+    except Exception as e:
+        print(f"⚠️ Lỗi truy vấn CSDL users_ssl_db: {e}")
+
+    return user_map
 
 
 def _get_attr(obj: Any, candidates: List[str], default: Any = None) -> Any:
@@ -145,7 +173,7 @@ def delete_exam_by_id(exam_id: UUID, db: Session = Depends(get_db)):
 
 
 # ===================================================================
-# 2. DANH SÁCH BÀI NỘP CỦA SINH VIÊN (PAGINATED & DIRECT USER FETCH)
+# 2. DANH SÁCH BÀI NỘP CỦA SINH VIÊN (PAGINATED & DIRECT DB FETCH)
 # ===================================================================
 
 @router.get("/{exam_id}/submissions")
@@ -171,7 +199,7 @@ def get_exam_submissions(
         elif st in ["DONE", "COMPLETED"]:
             filters.append(Attempt.status.in_(["COMPLETED", "GRADED", "DONE"]))
 
-    # 1. Đếm tổng số bài làm phù hợp
+    # 1. Đếm tổng số bài nộp khớp bộ lọc
     total_items = db.exec(select(func.count(Attempt.attempt_id)).where(*filters)).one() or 0
 
     # 2. Phân trang SQL (LIMIT / OFFSET)
@@ -185,17 +213,9 @@ def get_exam_submissions(
     )
     attempts = db.exec(statement).all()
 
-    # 3. Query bảng "user" lấy username & email chỉ cho danh sách ID trang hiện tại
-    user_map = {}
-    uids = list({att.user_id for att in attempts if att.user_id})
-    if uids:
-        try:
-            sql = text('SELECT user_id, username, email FROM "user" WHERE user_id = ANY(:uids)')
-            rows = db.execute(sql, {"uids": uids}).fetchall()
-            for r in rows:
-                user_map[str(r[0])] = {"username": r[1], "email": r[2]}
-        except Exception:
-            db.rollback()
+    # 3. Query username trực tiếp từ users_ssl_db cho các user_id trang hiện tại
+    uids = [att.user_id for att in attempts if att.user_id]
+    user_map = _get_users_map_from_db(uids)
 
     submissions = []
     for att in attempts:
@@ -266,17 +286,11 @@ def get_submission_detail_for_grading(
 
     exam = crud_exam.get_by_id(db, exam_id=attempt.exam_id)
 
-    short_uid = str(attempt.user_id)[:8]
-    u_info = {}
-    if attempt.user_id:
-        try:
-            sql = text('SELECT username, email FROM "user" WHERE user_id = :uid')
-            row = db.execute(sql, {"uid": attempt.user_id}).fetchone()
-            if row:
-                u_info = {"username": row[0], "email": row[1]}
-        except Exception:
-            db.rollback()
+    # Truy vấn username trực tiếp từ users_ssl_db
+    u_map = _get_users_map_from_db([attempt.user_id] if attempt.user_id else [])
+    u_info = u_map.get(str(attempt.user_id), {})
 
+    short_uid = str(attempt.user_id)[:8]
     username = u_info.get("username")
     email = u_info.get("email") or f"student_{short_uid}@lumer.edu.vn"
     display_name = username or f"Sinh viên #{short_uid}"
