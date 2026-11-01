@@ -391,9 +391,9 @@ export default function ExamDetailPage() {
             <h2 className="text-xs font-black uppercase tracking-wider text-indigo-900 flex items-center gap-2">
               Danh sách câu hỏi ({questions.length} câu)
             </h2>
-            <p className="text-[11px] font-semibold text-slate-400 mt-0.5">
+            {/* <p className="text-[11px] font-semibold text-slate-400 mt-0.5">
               Tổng điểm đề thi: <b className="text-indigo-600">{totalPoints} điểm</b>
-            </p>
+            </p> */}
           </div>
 
           <div className="flex items-center gap-2">
