@@ -140,60 +140,69 @@ def _get_users_map(db: Session, user_ids: List[UUID], auth_header: Optional[str]
         return user_map
 
     valid_uids = list({str(uid) for uid in user_ids if uid})
-    if not valid_uids:
-        return user_map
-
-    # 1. TRUY VẤN CSDL TRỰC TIẾP VỚI ĐÚNG CỘT TRONG BẢNG "user" (user_id, username, email)
-    from sqlalchemy import text
-    try:
-        formatted_uids = ",".join([f"'{uid}'::uuid" for uid in valid_uids])
-        sql = text(f'SELECT user_id::text, username, email FROM "user" WHERE user_id IN ({formatted_uids})')
-        rows = db.execute(sql).fetchall()
-        for r in rows:
-            uid_str = str(r[0])
-            user_map[uid_str] = {
-                "username": r[1],
-                "email": r[2] or "",
-                "full_name": r[1],  # Hiển thị username làm tên đại diện
-            }
-        if user_map:
-            return user_map
-    except Exception as e:
-        print(f"⚠️ [DEBUG] Lỗi query SQL bảng user: {e}")
-        db.rollback()
-
-    # 2. FALLBACK GỌI HTTP SANG AUTH SERVICE TRONG K8S (Chỉ gọi khi DB tách rời hoàn toàn)
+    
     import urllib.request
     import json
     import os
 
-    # Lấy URL K8s từ biến môi trường BACKEND_USER_URL (http://auth-service:8000)
-    auth_base_url = os.getenv("BACKEND_USER_URL") or os.getenv("AUTH_SERVICE_URL") or "http://auth-service:8000"
-    if not auth_base_url.endswith("/api/v1"):
-        auth_base_url = f"{auth_base_url.rstrip('/')}/api/v1"
+    # Lấy đúng tên biến môi trường BACKEND_USER_URL (http://auth-service:8000) từ K8s
+    raw_url = os.getenv("BACKEND_USER_URL") or os.getenv("AUTH_SERVICE_URL") or "http://auth-service:8000"
+    base_url = raw_url.rstrip("/")
 
     headers = {"Content-Type": "application/json"}
     if auth_header:
         headers["Authorization"] = auth_header
 
+    # 1. THỬ GỌI API LẤY TOÀN BỘ BẢNG USER TỪ AUTH-SERVICE
+    url_prefixes = [f"{base_url}/api/v1", base_url]
+    
+    for prefix in url_prefixes:
+        for ep in ["/users", "/users/"]:
+            try:
+                url = f"{prefix}{ep}"
+                req = urllib.request.Request(url, headers=headers)
+                with urllib.request.urlopen(req, timeout=3) as response:
+                    if response.status == 200:
+                        data = json.loads(response.read().decode())
+                        items = data if isinstance(data, list) else data.get("items", data.get("users", []))
+                        if isinstance(items, list) and items:
+                            for u in items:
+                                uid = str(u.get("id") or u.get("user_id") or "")
+                                if uid:
+                                    user_map[uid] = {
+                                        "username": u.get("username"),
+                                        "full_name": u.get("full_name") or u.get("first_name") or u.get("username"),
+                                        "email": u.get("email"),
+                                    }
+                            if user_map:
+                                print(f"✅ [DEBUG_USER] Lấy thành công {len(user_map)} users từ Auth API List: {url}")
+                                return user_map
+            except Exception as e:
+                print(f"⚠️ [DEBUG_USER] Lỗi gọi Auth API ({prefix}{ep}): {e}")
+
+    # 2. GỌI DETAIL TỪNG USER NẾU LIST API KHÔNG TRẢ VỀ TOÀN BỘ
     for uid_str in valid_uids:
-        try:
-            url = f"{auth_base_url}/users/{uid_str}"
-            req = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(req, timeout=2) as response:
-                if response.status == 200:
-                    data = json.loads(response.read().decode())
-                    user_map[uid_str] = {
-                        "username": data.get("username"),
-                        "full_name": data.get("full_name") or data.get("username"),
-                        "email": data.get("email"),
-                    }
-        except Exception:
-            pass
+        if uid_str in user_map:
+            continue
+        for prefix in url_prefixes:
+            for ep in [f"/users/{uid_str}", f"/users/id/{uid_str}"]:
+                try:
+                    url = f"{prefix}{ep}"
+                    req = urllib.request.Request(url, headers=headers)
+                    with urllib.request.urlopen(req, timeout=2) as response:
+                        if response.status == 200:
+                            data = json.loads(response.read().decode())
+                            user_map[uid_str] = {
+                                "username": data.get("username"),
+                                "full_name": data.get("full_name") or data.get("first_name") or data.get("username"),
+                                "email": data.get("email"),
+                            }
+                            print(f"✅ [DEBUG_USER] Lấy user {uid_str} thành công từ Auth API Detail: {url}")
+                            break
+                except Exception:
+                    pass
 
     return user_map
-
-
 
 # ===================================================================
 # 1. QUẢN LÝ ĐỀ THI (CRUD)
