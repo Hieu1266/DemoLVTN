@@ -139,25 +139,24 @@ export async function listQuestions(examId: string) {
   return detail.questions || [];
 }
 
-export interface SubmissionQuery {
-  page?: number;
-  pageSize?: number;
-  status?: string; // all | needs_grading | done
-  q?: string;
-  sort?: string; // submitted_at | started_at | total_score
-  order?: "asc" | "desc";
-}
+export async function listSubmissions(
+  examId: string,
+  params?: {
+    page?: number;
+    pageSize?: number;
+    status?: string;
+    search?: string;
+  }
+) {
+  const queryParams = new URLSearchParams();
+  if (params?.page) queryParams.set("page", String(params.page));
+  if (params?.pageSize) queryParams.set("page_size", String(params.pageSize));
+  if (params?.status && params.status !== "ALL") queryParams.set("status", params.status);
+  if (params?.search?.trim()) queryParams.set("search", params.search.trim());
 
-export async function listSubmissions(examId: string, query: SubmissionQuery = {}) {
-  const params = new URLSearchParams();
-  if (query.page) params.set("page", String(query.page));
-  if (query.pageSize) params.set("page_size", String(query.pageSize));
-  if (query.status && query.status !== "all") params.set("status", query.status);
-  if (query.q) params.set("q", query.q);
-  if (query.sort) params.set("sort", query.sort);
-  if (query.order) params.set("order", query.order);
-  const qs = params.toString();
-  return await api<any>(EXAM_URL, `/exams/${examId}/submissions${qs ? `?${qs}` : ""}`, {
+  const queryString = queryParams.toString() ? `?${queryParams.toString()}` : "";
+
+  return await api<any>(EXAM_URL, `/exams/${examId}/submissions${queryString}`, {
     method: "GET",
   });
 }
