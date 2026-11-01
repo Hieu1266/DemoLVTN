@@ -2,8 +2,9 @@ from typing import List, Dict, Any, Optional
 from uuid import UUID
 from datetime import datetime, timezone
 from decimal import Decimal
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlmodel import Session, select
+from sqlalchemy import text, func
 
 from app.api.v1.deps import get_db, get_current_user
 from app.crud.crud_exam import crud_exam, parse_dt
@@ -36,174 +37,6 @@ def _set_model_field(obj: Any, candidates: List[str], value: Any) -> Optional[st
     return None
 
 
-# def _get_users_map(db: Session, user_ids: List[UUID], auth_header: Optional[str] = None) -> Dict[str, Dict[str, Any]]:
-#     user_map = {}
-#     if not user_ids:
-#         return user_map
-
-#     str_ids = {str(uid) for uid in user_ids}
-
-#     # -------------------------------------------------------------------
-#     # 1. TRUY VẤN CƠ SỞ DỮ LIỆU (Thử tất cả các cấu trúc bảng & cột)
-#     # -------------------------------------------------------------------
-#     from sqlalchemy import text
-
-#     queries = [
-#         'SELECT id::text, username, email, full_name FROM "user"',
-#         'SELECT id::text, username, email, full_name FROM users',
-#         'SELECT id::text, username, email, username FROM "user"',
-#         'SELECT id::text, username, email, username FROM users',
-#         'SELECT user_id::text, username, email, full_name FROM "user"',
-#         'SELECT user_id::text, username, email, full_name FROM users',
-#     ]
-
-#     for q in queries:
-#         try:
-#             res = db.execute(text(q)).fetchall()
-#             if res:
-#                 for row in res:
-#                     uid_str = str(row[0])
-#                     user_map[uid_str] = {
-#                         "username": row[1],
-#                         "email": row[2] or "",
-#                         "full_name": row[3] or row[1],
-#                     }
-#                 print(f"✅ [DEBUG] Lấy thành công {len(user_map)} users từ DB bằng query: {q}")
-#                 if str_ids.issubset(set(user_map.keys())):
-#                     return user_map
-#         except Exception:
-#             db.rollback()  # Bắt buộc rollback để tránh hỏng transaction SQLAlchemy
-
-#     # -------------------------------------------------------------------
-#     # 2. GỌI HTTP SANG AUTH SERVICE (Port 8000) NẾU TÁCH DB MICROSERVICES
-#     # -------------------------------------------------------------------
-#     import urllib.request
-#     import json
-#     import os
-
-#     auth_base_url = os.getenv("AUTH_SERVICE_URL", "http://localhost:8000/api/v1")
-#     headers = {"Content-Type": "application/json"}
-#     if auth_header:
-#         headers["Authorization"] = auth_header
-
-#     # Thử lấy toàn bộ danh sách User từ Auth Service
-#     list_endpoints = ["/users/", "/users", "/user/", "/user"]
-#     for ep in list_endpoints:
-#         try:
-#             url = f"{auth_base_url}{ep}"
-#             req = urllib.request.Request(url, headers=headers)
-#             with urllib.request.urlopen(req, timeout=2) as response:
-#                 if response.status == 200:
-#                     data = json.loads(response.read().decode())
-#                     if isinstance(data, list):
-#                         for u in data:
-#                             uid = str(u.get("id") or u.get("user_id") or "")
-#                             if uid:
-#                                 user_map[uid] = {
-#                                     "username": u.get("username"),
-#                                     "full_name": u.get("full_name") or u.get("first_name") or u.get("username"),
-#                                     "email": u.get("email"),
-#                                 }
-#                         print(f"✅ [DEBUG] Lấy thành công {len(user_map)} users từ Auth API List: {url}")
-#                         if str_ids.issubset(set(user_map.keys())):
-#                             return user_map
-#         except Exception as e:
-#             print(f"⚠️ [DEBUG] Lỗi gọi Auth API List ({ep}): {e}")
-
-#     # Thử lấy chi tiết từng User nếu danh sách trên chưa có
-#     for uid_str in str_ids:
-#         if uid_str in user_map:
-#             continue
-#         detail_endpoints = [f"/users/{uid_str}", f"/users/id/{uid_str}", f"/users/by-id/{uid_str}"]
-#         for ep in detail_endpoints:
-#             try:
-#                 url = f"{auth_base_url}{ep}"
-#                 req = urllib.request.Request(url, headers=headers)
-#                 with urllib.request.urlopen(req, timeout=2) as response:
-#                     if response.status == 200:
-#                         data = json.loads(response.read().decode())
-#                         user_map[uid_str] = {
-#                             "username": data.get("username"),
-#                             "full_name": data.get("full_name") or data.get("first_name") or data.get("username"),
-#                             "email": data.get("email"),
-#                         }
-#                         print(f"✅ [DEBUG] Lấy user {uid_str} từ Auth API Detail: {url}")
-#                         break
-#             except Exception as e:
-#                 print(f"⚠️ [DEBUG] Lỗi gọi Auth API Detail ({ep}): {e}")
-
-#     return user_map
-
-def _get_users_map(db: Session, user_ids: List[UUID], auth_header: Optional[str] = None) -> Dict[str, Dict[str, Any]]:
-    user_map = {}
-    if not user_ids:
-        return user_map
-
-    valid_uids = list({str(uid) for uid in user_ids if uid})
-    
-    import urllib.request
-    import json
-    import os
-
-    # Lấy đúng tên biến môi trường BACKEND_USER_URL (http://auth-service:8000) từ K8s
-    raw_url = os.getenv("BACKEND_USER_URL") or os.getenv("AUTH_SERVICE_URL") or "http://auth-service:8000"
-    base_url = raw_url.rstrip("/")
-
-    headers = {"Content-Type": "application/json"}
-    if auth_header:
-        headers["Authorization"] = auth_header
-
-    # 1. THỬ GỌI API LẤY TOÀN BỘ BẢNG USER TỪ AUTH-SERVICE
-    url_prefixes = [f"{base_url}/api/v1", base_url]
-    
-    for prefix in url_prefixes:
-        for ep in ["/users", "/users/"]:
-            try:
-                url = f"{prefix}{ep}"
-                req = urllib.request.Request(url, headers=headers)
-                with urllib.request.urlopen(req, timeout=3) as response:
-                    if response.status == 200:
-                        data = json.loads(response.read().decode())
-                        items = data if isinstance(data, list) else data.get("items", data.get("users", []))
-                        if isinstance(items, list) and items:
-                            for u in items:
-                                uid = str(u.get("id") or u.get("user_id") or "")
-                                if uid:
-                                    user_map[uid] = {
-                                        "username": u.get("username"),
-                                        "full_name": u.get("full_name") or u.get("first_name") or u.get("username"),
-                                        "email": u.get("email"),
-                                    }
-                            if user_map:
-                                print(f"✅ [DEBUG_USER] Lấy thành công {len(user_map)} users từ Auth API List: {url}")
-                                return user_map
-            except Exception as e:
-                print(f"⚠️ [DEBUG_USER] Lỗi gọi Auth API ({prefix}{ep}): {e}")
-
-    # 2. GỌI DETAIL TỪNG USER NẾU LIST API KHÔNG TRẢ VỀ TOÀN BỘ
-    for uid_str in valid_uids:
-        if uid_str in user_map:
-            continue
-        for prefix in url_prefixes:
-            for ep in [f"/users/{uid_str}", f"/users/id/{uid_str}"]:
-                try:
-                    url = f"{prefix}{ep}"
-                    req = urllib.request.Request(url, headers=headers)
-                    with urllib.request.urlopen(req, timeout=2) as response:
-                        if response.status == 200:
-                            data = json.loads(response.read().decode())
-                            user_map[uid_str] = {
-                                "username": data.get("username"),
-                                "full_name": data.get("full_name") or data.get("first_name") or data.get("username"),
-                                "email": data.get("email"),
-                            }
-                            print(f"✅ [DEBUG_USER] Lấy user {uid_str} thành công từ Auth API Detail: {url}")
-                            break
-                except Exception:
-                    pass
-
-    return user_map
-
 # ===================================================================
 # 1. QUẢN LÝ ĐỀ THI (CRUD)
 # ===================================================================
@@ -214,24 +47,13 @@ def get_all_exams(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    """Lấy danh sách đề thi (Tự động phân quyền: Admin thấy hết, Giảng viên chỉ thấy đề của mình)."""
-    user_id_str = current_user.get("user_id") or current_user.get("id") or current_user.get("sub")
-    role = str(current_user.get("role") or current_user.get("role_id") or "").upper()
-
-    # Nếu người dùng là Giảng viên (INSTRUCTOR), lọc danh sách theo user_id
-    if role == "INSTRUCTOR" and user_id_str:
-        try:
-            uid = UUID(str(user_id_str))
-            return crud_exam.get_instructor_exams(db, instructor_id=uid)
-        except (ValueError, TypeError):
-            pass
-
-    # Nếu là ADMIN hoặc trường hợp khác, lấy toàn bộ danh sách
+    """Lấy danh sách tất cả đề thi."""
     statement = select(Exam)
     if hasattr(Exam, "created_at"):
         statement = statement.order_by(Exam.created_at.desc())
     exams = db.exec(statement).all()
     return exams
+
 
 @router.post("", response_model=None)
 @router.post("/")
@@ -271,9 +93,7 @@ def update_exam_by_id(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    """
-    Cập nhật thông tin đề thi & chuyển đổi trạng thái (DRAFT / PUBLISHED / CLOSED).
-    """
+    """Cập nhật thông tin đề thi & chuyển đổi trạng thái."""
     exam = crud_exam.get_by_id(db, exam_id)
     if not exam:
         raise HTTPException(status_code=404, detail="Không tìm thấy đề thi để cập nhật!")
@@ -325,30 +145,23 @@ def delete_exam_by_id(exam_id: UUID, db: Session = Depends(get_db)):
 
 
 # ===================================================================
-# 2. DANH SÁCH BÀI NỘP CỦA SINH VIÊN (SUBMISSIONS LIST)
-# ===================================================================
-from fastapi import Query
-from sqlalchemy import func
-
-# ===================================================================
-# 2. DANH SÁCH BÀI NỘP CỦA SINH VIÊN (SUBMISSIONS LIST - SERVER PAGINATION)
+# 2. DANH SÁCH BÀI NỘP CỦA SINH VIÊN (PAGINATED & DIRECT USER FETCH)
 # ===================================================================
 
 @router.get("/{exam_id}/submissions")
 def get_exam_submissions(
     exam_id: UUID,
-    page: int = Query(1, ge=1, description="Số trang hiện tại"),
-    page_size: int = Query(15, ge=1, le=100, description="Kích thước trang"),
-    status_filter: Optional[str] = Query(None, alias="status", description="ALL | NEEDS_GRADING | DONE"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(15, ge=1, le=100),
+    status_filter: Optional[str] = Query(None, alias="status"),
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    """Lấy danh sách bài thi đã nộp theo phân trang CSDL để tối ưu bộ nhớ RAM."""
+    """Lấy danh sách các bài thi đã nộp theo phân trang CSDL để né OOMKilled."""
     exam = crud_exam.get_by_id(db, exam_id)
     if not exam:
         raise HTTPException(status_code=404, detail="Không tìm thấy đề thi!")
 
-    # 1. Tạo điều kiện lọc cơ bản
     filters = [Attempt.exam_id == exam_id, Attempt.status != "IN_PROGRESS"]
 
     if status_filter and status_filter.upper() != "ALL":
@@ -358,11 +171,10 @@ def get_exam_submissions(
         elif st in ["DONE", "COMPLETED"]:
             filters.append(Attempt.status.in_(["COMPLETED", "GRADED", "DONE"]))
 
-    # 2. Đếm tổng số bài nộp khớp với bộ lọc (Chỉ count ID, không load JSON object)
-    count_statement = select(func.count(Attempt.attempt_id)).where(*filters)
-    total_items = db.exec(count_statement).one() or 0
+    # 1. Đếm tổng số bài làm phù hợp
+    total_items = db.exec(select(func.count(Attempt.attempt_id)).where(*filters)).one() or 0
 
-    # 3. Phân trang trực tiếp bằng SQL (LIMIT & OFFSET)
+    # 2. Phân trang SQL (LIMIT / OFFSET)
     offset_val = (page - 1) * page_size
     statement = (
         select(Attempt)
@@ -373,9 +185,17 @@ def get_exam_submissions(
     )
     attempts = db.exec(statement).all()
 
-    # 4. CHỈ TRUY VẤN THÔNG TIN USER CHO 15 BÀI TRÊN TRANG HIỆN TẠI (Tiết kiệm 95% RAM)
-    user_ids = [att.user_id for att in attempts if att.user_id]
-    user_map = _get_users_map(db, user_ids)
+    # 3. Query bảng "user" lấy username & email chỉ cho danh sách ID trang hiện tại
+    user_map = {}
+    uids = list({att.user_id for att in attempts if att.user_id})
+    if uids:
+        try:
+            sql = text('SELECT user_id, username, email FROM "user" WHERE user_id = ANY(:uids)')
+            rows = db.execute(sql, {"uids": uids}).fetchall()
+            for r in rows:
+                user_map[str(r[0])] = {"username": r[1], "email": r[2]}
+        except Exception:
+            db.rollback()
 
     submissions = []
     for att in attempts:
@@ -385,15 +205,10 @@ def get_exam_submissions(
 
         short_uid = str(att.user_id)[:8]
         u_info = user_map.get(str(att.user_id), {})
-        
-        uname = u_info.get("username")
-        fname = u_info.get("full_name")
-        uemail = u_info.get("email")
 
-        default_name = f"Sinh viên #{short_uid}"
-        student_name = fname or uname or default_name
-        username = uname or student_name
-        student_email = uemail or f"student_{short_uid}@lumer.edu.vn"
+        username = u_info.get("username")
+        email = u_info.get("email") or f"student_{short_uid}@lumer.edu.vn"
+        display_name = username or f"Sinh viên #{short_uid}"
 
         score_num = float(score_val) if score_val is not None else 0.0
         max_num = float(max_val) if max_val is not None else 10.0
@@ -404,12 +219,12 @@ def get_exam_submissions(
             "exam_id": str(att.exam_id),
             "user_id": str(att.user_id),
             "student_id": str(att.user_id),
-            "username": username,
-            "student_name": student_name,
-            "full_name": student_name,
-            "name": student_name,
-            "student_email": student_email,
-            "email": student_email,
+            "username": username or display_name,
+            "student_name": display_name,
+            "full_name": display_name,
+            "name": display_name,
+            "student_email": email,
+            "email": email,
             "score": score_num,
             "total_score": score_num,
             "earned_score": score_num,
@@ -450,6 +265,22 @@ def get_submission_detail_for_grading(
         raise HTTPException(status_code=404, detail="Không tìm thấy bài làm thi!")
 
     exam = crud_exam.get_by_id(db, exam_id=attempt.exam_id)
+
+    short_uid = str(attempt.user_id)[:8]
+    u_info = {}
+    if attempt.user_id:
+        try:
+            sql = text('SELECT username, email FROM "user" WHERE user_id = :uid')
+            row = db.execute(sql, {"uid": attempt.user_id}).fetchone()
+            if row:
+                u_info = {"username": row[0], "email": row[1]}
+        except Exception:
+            db.rollback()
+
+    username = u_info.get("username")
+    email = u_info.get("email") or f"student_{short_uid}@lumer.edu.vn"
+    display_name = username or f"Sinh viên #{short_uid}"
+
     answers = db.exec(
         select(AttemptAnswer).where(AttemptAnswer.attempt_id == attempt_id)
     ).all()
@@ -512,20 +343,6 @@ def get_submission_detail_for_grading(
     max_val = _get_attr(attempt, ["total_points", "max_score", "max_points"], 10.0)
     submitted_time = _get_attr(attempt, ["completed_at", "submitted_at", "ended_at", "started_at"])
 
-    # Lấy thông tin user
-    u_map = _get_users_map(db, [attempt.user_id] if attempt.user_id else [])
-    u_info = u_map.get(str(attempt.user_id), {})
-
-    short_uid = str(attempt.user_id)[:8]
-    uname = u_info.get("username")
-    fname = u_info.get("full_name")
-    uemail = u_info.get("email")
-
-    default_name = f"Sinh viên #{short_uid}"
-    student_name = fname or uname or default_name
-    username = uname or student_name
-    student_email = uemail or f"student_{short_uid}@lumer.edu.vn"
-
     score_num = float(score_val) if score_val is not None else 0.0
     max_num = float(max_val) if max_val is not None else 10.0
 
@@ -534,19 +351,19 @@ def get_submission_detail_for_grading(
         "attempt_id": str(attempt.attempt_id),
         "exam_id": str(attempt.exam_id),
         "exam_name": exam.exam_name if exam else "Bài thi",
-        "username": username,
-        "student_name": student_name,
-        "full_name": student_name,
-        "name": student_name,
-        "student_email": student_email,
-        "email": student_email,
+        "username": username or display_name,
+        "student_name": display_name,
+        "full_name": display_name,
+        "name": display_name,
+        "student_email": email,
+        "email": email,
         "user_id": str(attempt.user_id),
         "student": {
             "id": str(attempt.user_id),
-            "username": username,
-            "full_name": student_name,
-            "name": student_name,
-            "email": student_email,
+            "username": username or display_name,
+            "full_name": display_name,
+            "name": display_name,
+            "email": email,
         },
         "score": score_num,
         "total_score": score_num,
@@ -604,12 +421,7 @@ def grade_submission(
 
         if q_id in grades and ans:
             grade_item = grades[q_id]
-            raw_earned = Decimal(str(grade_item.get("earned_points", grade_item.get("score", 0))))
-            
-            # 🔴 CHẶN LỖI: Điểm chấm không được nhỏ hơn 0 và không được vượt quá điểm tối đa của câu hỏi (q.points)
-            max_q_pts = Decimal(str(q.points if q.points is not None else 1.0))
-            earned = min(max_q_pts, max(Decimal("0.00"), raw_earned))
-
+            earned = Decimal(str(grade_item.get("earned_points", grade_item.get("score", 0))))
             is_corr = grade_item.get("is_correct", True if earned > 0 else False)
 
             _set_model_field(ans, ["earned_points", "points_earned", "score"], earned)
@@ -622,8 +434,7 @@ def grade_submission(
 
     if total_possible_raw > Decimal("0.00"):
         scaled_score = (total_earned_raw / total_possible_raw) * Decimal("10.00")
-        # 🔴 CHẶN LỖI: Điểm tổng thang 10 không bao giờ vượt quá 10.00
-        scaled_score = min(Decimal("10.00"), max(Decimal("0.00"), round(scaled_score, 2)))
+        scaled_score = round(scaled_score, 2)
     else:
         scaled_score = Decimal("0.00")
 
