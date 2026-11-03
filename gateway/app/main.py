@@ -1,26 +1,3 @@
-"""
-API Gateway - FastAPI Reverse Proxy + Load Shedding + Cân bằng tải theo từng request
------------------------------------------------------------------------------------
-Chế độ cân bằng tải chọn bằng biến môi trường LB_MODE (đổi không cần build lại image):
-
-  k8s    (mặc định) Gọi thẳng Service ClusterIP, kube-proxy chọn pod theo từng KẾT NỐI.
-                    Kết nối keep-alive đã mở thì dính vào pod cũ -> pod mới do HPA tạo ít nhận tải.
-  rr     Round-robin theo từng request, trên danh sách pod lấy từ Service headless.
-  least  Ít request đang xử lý nhất (có khởi động chậm cho pod mới).
-  p2c    "Power of two choices": bốc ngẫu nhiên 2 pod, chọn pod ít bận hơn.
-
-Biến môi trường khác:
-  EXAM_DISCOVERY_HOST / AUTH_DISCOVERY_HOST  tên Service headless (mặc định exam-service-headless ...)
-  DISCOVERY_INTERVAL   chu kỳ làm mới danh sách pod, giây (mặc định 2)
-  SLOW_START_SEC       thời gian tăng dần tải cho pod mới, giây (mặc định 10)
-  UPSTREAM_TIMEOUT     timeout gọi backend, giây (mặc định 10)
-  KEEPALIVE_EXPIRY     thời gian giữ kết nối rảnh, giây (mặc định 3, nhỏ hơn 5s của uvicorn)
-  DISABLE_KEEPALIVE=1  tắt keep-alive tới backend (thí nghiệm ở chế độ k8s)
-
-Mỗi phản hồi có thêm header: x-gateway-instance (ip:port pod đã phục vụ), x-gateway-pod, x-lb-mode.
-GET /debug/state cho xem danh sách pod, số request đang xử lý và số đã phục vụ.
-"""
-
 import asyncio
 import os
 import random
@@ -106,8 +83,6 @@ class Instance:
 
 
 class Pool:
-    """Nhóm pod của một service."""
-
     def __init__(self, name: str, cluster_url: str, discovery_host: str, port: int, max_concurrent: int):
         self.name = name
         self.discovery_host = discovery_host
@@ -141,7 +116,6 @@ class Pool:
         return a if a.score() <= b.score() else b
 
     async def refresh(self) -> None:
-        """Lấy danh sách IP pod từ DNS của Service headless (chỉ gồm pod đã sẵn sàng)."""
         loop = asyncio.get_running_loop()
         infos = await loop.getaddrinfo(
             self.discovery_host, self.port, family=socket.AF_INET, type=socket.SOCK_STREAM

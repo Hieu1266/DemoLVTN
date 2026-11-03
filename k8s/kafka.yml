@@ -1,17 +1,4 @@
-# ==========================================================================
-# KAFKA (KRaft, 1 broker kiêm controller) - dành cho cụm 1 node Docker Desktop
-#
-# Triển khai:   kubectl apply -n ssl -f k8s/kafka.yml
-# Bootstrap cho ứng dụng trong cụm:   kafka:9092
-#
-# Giới hạn cần biết:
-#  - 1 broker => replication-factor = 1: KHÔNG chịu được lỗi broker (không dùng để chứng minh HA).
-#  - PLAINTEXT, không xác thực: chỉ dùng nội bộ trong cụm, không mở NodePort.
-# ==========================================================================
 
-# --------------------------------------------------------------------------
-# 1. Service headless: cho DNS ổn định kafka-0.kafka-headless (StatefulSet + controller quorum)
-# --------------------------------------------------------------------------
 apiVersion: v1
 kind: Service
 metadata:
