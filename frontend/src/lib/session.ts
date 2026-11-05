@@ -33,10 +33,10 @@ export function homeByRole(role?: string): string {
   const normalizedRole = role.toLowerCase().trim();
   switch (normalizedRole) {
     case "admin":
-      return "/dashboard_admin";
+      return "/admin/dashboard";
     case "instructor":
     case "teacher":
-      return "/dashboard_instructor/question-bank";
+      return "/dashboard_instructor";
     case "student":
       return "/dashboard_student";
     default:
