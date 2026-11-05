@@ -24,7 +24,6 @@ router = APIRouter()
 # KẾT NỐI PHỤ ĐẾN DATABASE users_ssl_db
 # -------------------------------------------------------------------
 def _get_user_db_engine():
-    """Lấy URL CSDL thực tế từ settings và đổi tên CSDL thành users_ssl_db."""
     raw_url = (
         getattr(settings, "EXAM_DB_URL", None)
         or getattr(settings, "DATABASE_URL", None)
@@ -45,7 +44,6 @@ user_db_engine = _get_user_db_engine()
 
 
 def _get_users_map_from_db(user_ids: List[UUID]) -> Dict[str, Dict[str, Any]]:
-    """Truy vấn trực tiếp CSDL users_ssl_db kèm Fallback HTTP sang auth-service."""
     user_map = {}
     if not user_ids:
         return user_map
@@ -54,7 +52,6 @@ def _get_users_map_from_db(user_ids: List[UUID]) -> Dict[str, Dict[str, Any]]:
     if not valid_uids:
         return user_map
 
-    # 1. TRUY VẤN TRỰC TIẾP CSDL users_ssl_db
     if user_db_engine:
         try:
             formatted_uids = ", ".join([f"'{uid}'" for uid in valid_uids])
@@ -75,36 +72,50 @@ def _get_users_map_from_db(user_ids: List[UUID]) -> Dict[str, Dict[str, Any]]:
                                     "username": r[1],
                                     "email": r[2] or f"student_{uid_str[:8]}@lumer.edu.vn"
                                 }
-                            print(f"✅ [USER_DB] Lấy thành công {len(user_map)} users từ DB!", flush=True)
                             return user_map
                     except Exception:
                         pass
         except Exception as e:
             print(f"⚠️ [USER_DB] Lỗi truy vấn users_ssl_db: {e}", flush=True)
 
-    # 2. FALLBACK: GỌI HTTP SANG AUTH SERVICE NẾU SQL THẤT BẠI
-    import urllib.request
-    import json
-
-    auth_url = os.getenv("BACKEND_USER_URL", "http://auth-service:8000").rstrip("/")
-    for uid_str in valid_uids:
-        for ep in [f"/api/v1/users/{uid_str}", f"/users/{uid_str}"]:
-            try:
-                req = urllib.request.Request(f"{auth_url}{ep}", headers={"Content-Type": "application/json"})
-                with urllib.request.urlopen(req, timeout=2) as resp:
-                    if resp.status == 200:
-                        data = json.loads(resp.read().decode())
-                        uname = data.get("username")
-                        if uname:
-                            user_map[uid_str] = {
-                                "username": uname,
-                                "email": data.get("email") or f"student_{uid_str[:8]}@lumer.edu.vn"
-                            }
-                            break
-            except Exception:
-                pass
-
     return user_map
+
+
+def _resolve_answer_text(ans_value: Any, options: List[Any]) -> Any:
+    """Ánh xạ mã option (opt_...) sang nội dung hiển thị chữ thật cho sinh viên/giảng viên."""
+    if ans_value is None or ans_value == "":
+        return ans_value
+    
+    if not isinstance(options, list) or not options:
+        return ans_value
+
+    opt_map = {}
+    for opt in options:
+        if isinstance(opt, dict):
+            opt_id = str(opt.get("id") or opt.get("value") or opt.get("key") or opt.get("code") or "").strip()
+            opt_text = opt.get("text") or opt.get("content") or opt.get("title") or opt.get("label") or opt_id
+            if opt_id:
+                opt_map[opt_id] = opt_text
+
+    if not opt_map:
+        return ans_value
+
+    # Nếu ans_value là chuỗi đại diện 1 ID
+    if isinstance(ans_value, str):
+        val_str = ans_value.strip()
+        if val_str in opt_map:
+            return opt_map[val_str]
+        if "," in val_str:
+            parts = [p.strip() for p in val_str.split(",")]
+            if any(p in opt_map for p in parts):
+                return ", ".join([str(opt_map.get(p, p)) for p in parts])
+
+    # Nếu ans_value là danh sách các ID (chọn nhiều)
+    if isinstance(ans_value, list):
+        resolved_list = [opt_map.get(str(v).strip(), v) for v in ans_value]
+        return ", ".join([str(x) for x in resolved_list])
+
+    return ans_value
 
 
 def _get_attr(obj: Any, candidates: List[str], default: Any = None) -> Any:
@@ -137,7 +148,6 @@ def get_all_exams(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    """Lấy danh sách tất cả đề thi."""
     statement = select(Exam)
     if hasattr(Exam, "created_at"):
         statement = statement.order_by(Exam.created_at.desc())
@@ -152,7 +162,6 @@ def create_new_exam(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    """Tạo mới đề thi kèm owner_id từ tài khoản đăng nhập."""
     user_id_str = current_user.get("user_id") or current_user.get("id") or current_user.get("sub")
     owner_id = UUID(str(user_id_str)) if user_id_str else None
     return crud_exam.create_exam(db, payload=payload, owner_id=owner_id)
@@ -164,7 +173,6 @@ def get_exam_by_id(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    """Lấy thông tin chi tiết đề thi kèm danh sách câu hỏi."""
     exam = crud_exam.get_by_id(db, exam_id)
     if not exam:
         raise HTTPException(status_code=404, detail="Không tìm thấy đề thi!")
@@ -183,7 +191,6 @@ def update_exam_by_id(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    """Cập nhật thông tin đề thi & chuyển đổi trạng thái."""
     exam = crud_exam.get_by_id(db, exam_id)
     if not exam:
         raise HTTPException(status_code=404, detail="Không tìm thấy đề thi để cập nhật!")
@@ -235,7 +242,7 @@ def delete_exam_by_id(exam_id: UUID, db: Session = Depends(get_db)):
 
 
 # ===================================================================
-# 2. DANH SÁCH BÀI NỘP CỦA SINH VIÊN (PAGINATED & DIRECT DB FETCH)
+# 2. DANH SÁCH BÀI NỘP CỦA SINH VIÊN
 # ===================================================================
 
 @router.get("/{exam_id}/submissions")
@@ -247,7 +254,6 @@ def get_exam_submissions(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    """Lấy danh sách các bài thi đã nộp theo phân trang CSDL để né OOMKilled."""
     exam = crud_exam.get_by_id(db, exam_id)
     if not exam:
         raise HTTPException(status_code=404, detail="Không tìm thấy đề thi!")
@@ -261,10 +267,8 @@ def get_exam_submissions(
         elif st in ["DONE", "COMPLETED"]:
             filters.append(Attempt.status.in_(["COMPLETED", "GRADED", "DONE"]))
 
-    # 1. Đếm tổng số bài nộp khớp bộ lọc
     total_items = db.exec(select(func.count(Attempt.attempt_id)).where(*filters)).one() or 0
 
-    # 2. Phân trang SQL (LIMIT / OFFSET)
     offset_val = (page - 1) * page_size
     statement = (
         select(Attempt)
@@ -275,7 +279,6 @@ def get_exam_submissions(
     )
     attempts = db.exec(statement).all()
 
-    # 3. Query username trực tiếp từ users_ssl_db cho các user_id trang hiện tại
     uids = [att.user_id for att in attempts if att.user_id]
     user_map = _get_users_map_from_db(uids)
 
@@ -330,7 +333,7 @@ def get_exam_submissions(
 
 
 # ===================================================================
-# 3. CHI TIẾT 1 BÀI NỘP ĐỂ GIẢNG VIÊN CHẤM TAY
+# 3. CHI TIẾT 1 BÀI NỘP ĐỂ GIẢNG VIÊN CHẤM TAY (ĐÃ MAP MÃ ĐÁP ÁN)
 # ===================================================================
 
 @router.get("/{exam_id}/submissions/{attempt_id}")
@@ -341,14 +344,12 @@ def get_submission_detail_for_grading(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    """Lấy chi tiết bài làm kèm câu hỏi và đáp án sinh viên để chấm bài."""
     attempt = crud_attempt.get_by_id(db, attempt_id)
     if not attempt:
         raise HTTPException(status_code=404, detail="Không tìm thấy bài làm thi!")
 
     exam = crud_exam.get_by_id(db, exam_id=attempt.exam_id)
 
-    # Truy vấn username trực tiếp từ users_ssl_db
     u_map = _get_users_map_from_db([attempt.user_id] if attempt.user_id else [])
     u_info = u_map.get(str(attempt.user_id), {})
 
@@ -377,6 +378,10 @@ def get_submission_detail_for_grading(
         q_max_pts = float(q.points) if q.points is not None else 1.0
         q_earned = float(earned_pts) if earned_pts is not None else 0.0
         q_data = q.data or {}
+        q_options = q_data.get("options", [])
+
+        # Ánh xạ mã opt_... thành nội dung hiển thị thực tế
+        resolved_ans_value = _resolve_answer_text(ans_value, q_options)
 
         detailed_items.append({
             "id": str(q.question_id),
@@ -397,17 +402,19 @@ def get_submission_detail_for_grading(
                 "data": q_data,
             },
             "data": q_data,
-            "options": q_data.get("options", []),
+            "options": q_options,
             "statements": q_data.get("statements", []),
             "blanks": q_data.get("blanks", []),
             "sample_answer": q_data.get("sample_answer", "") or q_data.get("explanation", ""),
             "explanation": q_data.get("explanation", "") or q_data.get("sample_answer", ""),
             "points": q_max_pts,
             "max_points": q_max_pts,
-            "student_answer": ans_value,
-            "user_answer": ans_value,
-            "answer": ans_value,
-            "answer_data": ans_value,
+            "raw_student_answer": ans_value,
+            "student_answer": resolved_ans_value,
+            "student_answer_text": resolved_ans_value,
+            "user_answer": resolved_ans_value,
+            "answer": resolved_ans_value,
+            "answer_data": resolved_ans_value,
             "earned_points": q_earned,
             "points_earned": q_earned,
             "score": q_earned,
@@ -471,7 +478,6 @@ def grade_submission(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    """Giảng viên chấm điểm câu tự luận/điền khuyết và cập nhật lại điểm thi."""
     attempt = crud_attempt.get_by_id(db, attempt_id)
     if not attempt:
         raise HTTPException(status_code=404, detail="Không tìm thấy bài làm!")
