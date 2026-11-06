@@ -193,7 +193,7 @@ jobs:
       - name: Deploy Manifests
         shell: powershell
         run: |
-          foreach ($f in @('backend', 'gateway', 'frontend', 'auto-scaling')) {
+          foreach ($f in @('backend', 'kafka', 'gateway', 'frontend', 'auto-scaling')) {
             Write-Host "Apply k8s/$f.yml"
             (Get-Content "k8s/$f.yml" -Raw) -replace 'DOCKER_USER', $env:DOCKER_USERNAME | kubectl apply -n ssl -f -
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -263,7 +263,7 @@ jobs:
         shell: powershell
         run: |
           # Apply Postgres & PgBouncer trước
-          foreach ($f in @('postgres', 'pgbouncer', 'backend', 'gateway', 'frontend', 'auto-scaling')) {
+          foreach ($f in @('postgres', 'pgbouncer', 'kafka', 'backend', 'gateway', 'frontend', 'auto-scaling')) {
             Write-Host "Apply k8s/$f.yml"
             (Get-Content "k8s/$f.yml" -Raw) -replace 'DOCKER_USER', $env:DOCKER_USERNAME | kubectl apply -n ssl -f -
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

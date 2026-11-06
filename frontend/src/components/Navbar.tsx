@@ -65,7 +65,7 @@ export default function Navbar() {
             <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-600 to-fuchsia-600 text-xl font-bold text-white shadow-md shadow-indigo-600/30">
               L
             </span>
-            <span className="text-xl font-bold tracking-tight">LUMER</span>
+            <span className="text-xl font-bold tracking-tight">ELB</span>
           </Link>
 
           {/* DYNAMIC NAV LINKS */}

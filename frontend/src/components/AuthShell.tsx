@@ -61,7 +61,7 @@ export default function AuthShell({
                 <span className="lm-ping absolute inline-flex h-full w-full rounded-full bg-emerald-300" />
                 <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-300" />
               </span>
-              LUMER · Thi trực tuyến
+              ELB · Thi trực tuyến
             </span>
             <h2 className="text-balance text-4xl font-extrabold leading-[1.15] tracking-tight">{tagline}</h2>
             <p className="max-w-xs text-sm text-white/80">

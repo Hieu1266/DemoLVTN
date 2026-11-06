@@ -131,7 +131,7 @@ export default function CreateInstructorPage() {
           <div>
             <div className="flex items-center gap-2">
               <span className="px-3 py-1 text-[11px] font-bold uppercase tracking-wider bg-indigo-100 text-indigo-700 rounded-full">
-                Admin Console
+                Manager Console
               </span>
             </div>
             <h1 className="text-2xl font-black text-slate-900 mt-2">Cấp Tài Khoản Giảng Viên</h1>

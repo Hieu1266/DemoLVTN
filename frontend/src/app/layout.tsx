@@ -5,7 +5,7 @@ import Navbar from "@/src/components/Navbar";
 import Footer from "@/src/components/Footer";
 
 export const metadata: Metadata = {
-  title: "LUMER - Thi trực tuyến",
+  title: "ELB - Thi trực tuyến",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
