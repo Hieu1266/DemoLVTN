@@ -1,4 +1,3 @@
-
 apiVersion: v1
 kind: Service
 metadata:
@@ -7,7 +6,7 @@ metadata:
     app: kafka
 spec:
   clusterIP: None
-  publishNotReadyAddresses: true   # DNS phải phân giải được ngay cả khi pod chưa Ready (controller tự tìm mình)
+  publishNotReadyAddresses: true
   selector:
     app: kafka
   ports:
@@ -16,9 +15,6 @@ spec:
   - name: controller
     port: 9093
 ---
-# --------------------------------------------------------------------------
-# 2. Service cho client: bootstrap qua kafka:9092
-# --------------------------------------------------------------------------
 apiVersion: v1
 kind: Service
 metadata:
@@ -34,9 +30,6 @@ spec:
     port: 9092
     targetPort: 9092
 ---
-# --------------------------------------------------------------------------
-# 3. Broker (StatefulSet, dữ liệu nằm trên PVC)
-# --------------------------------------------------------------------------
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -56,7 +49,6 @@ spec:
     spec:
       terminationGracePeriodSeconds: 60
 
-      # PVC kiểu hostpath thường thuộc root; image Kafka chạy bằng user 1000 nên cần cấp quyền ghi
       initContainers:
       - name: fix-permissions
         image: apache/kafka:4.3.0
@@ -71,14 +63,13 @@ spec:
       containers:
       - name: kafka
         image: apache/kafka:4.3.0
-        imagePullPolicy: IfNotPresent   # tránh phụ thuộc Docker Hub mỗi lần pod khởi động lại
+        imagePullPolicy: IfNotPresent
         ports:
         - name: broker
           containerPort: 9092
         - name: controller
           containerPort: 9093
         env:
-        # Hai biến này phải đứng TRƯỚC các biến dùng $(...) bên dưới
         - name: POD_NAME
           valueFrom:
             fieldRef:
@@ -110,7 +101,7 @@ spec:
         - name: KAFKA_INTER_BROKER_LISTENER_NAME
           value: "PLAINTEXT"
 
-        # --- 1 broker: các topic hệ thống chỉ có thể có 1 bản sao ---
+        # --- System Topics Replication ---
         - name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR
           value: "1"
         - name: KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR
@@ -124,17 +115,17 @@ spec:
         - name: KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS
           value: "0"
 
-        # --- Dữ liệu và vòng đời ---
+        # --- Storage ---
         - name: KAFKA_LOG_DIRS
           value: "/var/lib/kafka/data"
         - name: KAFKA_AUTO_CREATE_TOPICS_ENABLE
-          value: "false"          # topic tạo bằng Job bên dưới, tránh tạo nhầm khi gõ sai tên
+          value: "false"
         - name: KAFKA_NUM_PARTITIONS
           value: "6"
         - name: KAFKA_LOG_RETENTION_HOURS
           value: "48"
 
-        # --- Bộ nhớ JVM (mặc định 1 GB là quá lớn cho máy dùng chung) ---
+        # --- Memory ---
         - name: KAFKA_HEAP_OPTS
           value: "-Xms512m -Xmx512m"
 
@@ -170,15 +161,14 @@ spec:
           storage: 5Gi
 ---
 # --------------------------------------------------------------------------
-# 4. Job tạo topic (chạy lại nhiều lần vẫn an toàn nhờ --if-not-exists)
-#    Sửa danh sách topic ở khối "create ..." bên dưới theo thiết kế của bạn.
+# Job khởi tạo Topics hệ thống Thi Trực Tuyến
 # --------------------------------------------------------------------------
 apiVersion: batch/v1
 kind: Job
 metadata:
   name: kafka-create-topics
 spec:
-  ttlSecondsAfterFinished: 600     # tự xóa sau khi xong để lần deploy sau tạo lại, tránh lỗi Job bất biến
+  ttlSecondsAfterFinished: 600
   backoffLimit: 5
   template:
     spec:
@@ -199,20 +189,20 @@ spec:
             sleep 3
           done
 
-          # create <tên> <số partition> [--config k=v ...]
           create() {
             name=$1; parts=$2; shift 2
             $BIN/kafka-topics.sh --bootstrap-server $BS --create --if-not-exists \
               --topic "$name" --partitions "$parts" --replication-factor 1 "$@"
           }
 
-          # Trạng thái "mới nhất theo khóa" (khóa = attempt_id hoặc user+video): log compaction
-          create answer-draft   6 --config cleanup.policy=compact --config min.cleanable.dirty.ratio=0.1
-          create video-progress 6 --config cleanup.policy=compact --config min.cleanable.dirty.ratio=0.1
-          # Bài nộp: giữ 7 ngày để phát lại khi worker lỗi
-          create exam-submit    6 --config retention.ms=604800000
-          # Log ứng dụng: giữ 1 ngày
-          create app-log        3 --config retention.ms=86400000
+          # 1. Trạng thái bài nháp (Log compaction theo attempt_id)
+          create answer-draft 6 --config cleanup.policy=compact --config min.cleanable.dirty.ratio=0.1
+          
+          # 2. Hàng chờ Nộp bài thi (Giữ 7 ngày để phát lại nếu Worker bị lỗi)
+          create exam-submit  6 --config retention.ms=604800000
+          
+          # 3. App / Audit Logs (Giữ 1 ngày)
+          create app-log      3 --config retention.ms=86400000
 
-          echo "Danh sách topic:"
+          echo "Danh sách topic đã khởi tạo thành công:"
           $BIN/kafka-topics.sh --bootstrap-server $BS --list
