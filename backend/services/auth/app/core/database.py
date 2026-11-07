@@ -12,8 +12,8 @@ from app.core.security import hash_password
 engine = create_engine(
     settings.USERS_DB_URL,
     echo=False,
-    pool_size=50,
-    max_overflow=100,
+    pool_size=20,
+    max_overflow=20,
     pool_timeout=60,
     pool_recycle=1800,
     pool_pre_ping=True,

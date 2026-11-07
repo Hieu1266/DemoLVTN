@@ -472,7 +472,7 @@ import { Trend, Counter, Rate, Gauge } from 'k6/metrics';
 
 const GATEWAY_BASE = __ENV.GATEWAY_BASE || 'http://localhost:30888';
 const GATEWAY_URL = `${GATEWAY_BASE}/api/v1`;
-const ACCESS_CODE = __ENV.ACCESS_CODE || 'X4B25K';
+const ACCESS_CODE = __ENV.ACCESS_CODE || 'LRGA9C';
 const PROFILE = __ENV.PROFILE || 'smoke';
 
 // 200/201 = thành công, 400 = từ chối nghiệp vụ, 503 = gateway xả tải (load shedding)
