@@ -121,7 +121,7 @@ spec:
       policies:
       - type: Pods
         value: 2
-        periodSeconds: 30                # mỗi 30 giây tăng tối đa 2 pod
+        periodSeconds: 10                # mỗi 30 giây tăng tối đa 2 pod
     scaleDown:
       stabilizationWindowSeconds: 120    # tải giảm kéo dài 2 phút mới bớt pod
       policies:
