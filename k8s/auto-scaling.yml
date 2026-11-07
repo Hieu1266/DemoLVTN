@@ -40,7 +40,7 @@ spec:
     kind: Deployment
     name: exam-service
   minReplicas: 5
-  maxReplicas: 10
+  maxReplicas: 15
   metrics:
   - type: Resource
     resource:
@@ -107,7 +107,7 @@ spec:
     kind: Deployment
     name: api-gateway
   minReplicas: 5
-  maxReplicas: 10
+  maxReplicas: 15
   metrics:
   - type: Resource
     resource:
