@@ -1,4 +1,5 @@
 import asyncio
+import heapq
 import os
 import random
 import re
@@ -9,10 +10,12 @@ import httpx
 import jwt
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request, Response
+from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.background import BackgroundTask
 
 load_dotenv()
-JWT_SECRET = os.getenv("SECRET_KEY", "your_super_secret_key")
+JWT_SECRET = os.getenv("SECRET_KEY", "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")
 JWT_ALG = os.getenv("ALGORITHM", "HS256")
 
 LB_MODE = os.getenv("LB_MODE", "k8s").lower()
@@ -20,7 +23,6 @@ if LB_MODE not in ("k8s", "rr", "least", "p2c"):
     LB_MODE = "k8s"
 DISCOVERY_INTERVAL = float(os.getenv("DISCOVERY_INTERVAL", "2"))
 SLOW_START_SEC = float(os.getenv("SLOW_START_SEC", "10"))
-UPSTREAM_TIMEOUT = float(os.getenv("UPSTREAM_TIMEOUT", "10"))
 KEEPALIVE_EXPIRY = float(os.getenv("KEEPALIVE_EXPIRY", "3"))
 DISABLE_KEEPALIVE = os.getenv("DISABLE_KEEPALIVE", "0") == "1"
 GATEWAY_POD = os.getenv("HOSTNAME", "gateway")
@@ -38,7 +40,25 @@ HOP_BY_HOP = {
     "upgrade", "proxy-authenticate", "proxy-authorization", "te", "trailers",
 }
 
-app = FastAPI(title="API Gateway - K8s Fail-Fast")
+# ============================================================
+# CẤU HÌNH TIMEOUT & HÀNG ĐỢI ĐỘNG (TỐI ƯU MỚI)
+# ============================================================
+# Timeout chờ upstream xử lý tùy theo độ ưu tiên
+TIER_TIMEOUTS = {
+    1: 60.0,  # Tier 1 (Nộp bài, Join): Cho phép chạy tối đa 60 giây
+    2: 20.0,  # Tier 2 (Draft, Login): 20 giây
+    3: 10.0,  # Tier 3 (Khác): 10 giây
+}
+
+# Thời gian tối đa được phép chờ trong Hàng đợi trước khi bị loại bỏ (Load Shedding)
+QUEUE_TIMEOUTS = {
+    1: 15.0,  # Tier 1 kiên nhẫn chờ slot trống tới 15 giây
+    2: 5.0,   # Tier 2 chờ 5 giây
+    3: 2.0,   # Tier 3 chờ 2 giây
+}
+
+
+app = FastAPI(title="API Gateway - K8s Priority Queue & Streaming")
 
 app.add_middleware(
     CORSMiddleware,
@@ -50,18 +70,60 @@ app.add_middleware(
 
 
 # ============================================================
-# 1. DANH SÁCH BACKEND VÀ CÂN BẰNG TẢI
+# 1. BỘ GIỚI HẠN & HÀNG ĐỢI ƯU TIÊN (PRIORITY LIMITER)
 # ============================================================
-class Instance:
-    """Một pod backend."""
+class PriorityLimiter:
+    """Quản lý giới hạn đồng thời và xếp hàng các request vượt ngưỡng."""
+    def __init__(self, max_concurrent: int, max_queue: int = 300):
+        self.max_concurrent = max_concurrent
+        self.max_queue = max_queue
+        self.active = 0
+        self.queue = []      # Min-Heap lưu tuple: (priority, counter, event)
+        self._counter = 0    # Đảm bảo FIFO cho các request cùng mức priority
 
+    async def acquire(self, priority: int, timeout: float) -> bool:
+        if self.active < self.max_concurrent:
+            self.active += 1
+            return True
+        
+        # Hàng đợi đã đầy -> Từ chối (Load Shedding bảo vệ bộ nhớ Gateway)
+        if len(self.queue) >= self.max_queue:
+            return False
+            
+        self._counter += 1
+        event = asyncio.Event()
+        # priority nhỏ hơn sẽ nổi lên đầu (1 ưu tiên hơn 2)
+        heapq.heappush(self.queue, (priority, self._counter, event))
+        
+        try:
+            # Chờ tới lượt được cấp phát
+            await asyncio.wait_for(event.wait(), timeout=timeout)
+            # Worker release đã tăng self.active cho ta rồi, nên không cần tăng thêm
+            return True
+        except asyncio.TimeoutError:
+            # Hết thời gian kiên nhẫn chờ trong hàng đợi -> Đánh dấu bỏ qua
+            event.set() 
+            return False
+
+    def release(self):
+        self.active -= 1
+        # Cấp phát slot cho request đứng đầu hàng đợi
+        while self.queue:
+            _, _, event = heapq.heappop(self.queue)
+            # Bỏ qua những request đã bị timeout (is_set == True do TimeoutError ở trên)
+            if not event.is_set():
+                self.active += 1
+                event.set() # Đánh thức request
+                break
+
+
+class Instance:
     __slots__ = ("url", "active", "served", "born")
 
     def __init__(self, url: str, born: float | None = None):
         self.url = url
-        self.active = 0       # số request đang xử lý
-        self.served = 0       # số request đã phục vụ thành công
-        # born=None: pod đã có từ trước, không cần khởi động chậm
+        self.active = 0
+        self.served = 0
         self.born = born
 
     @property
@@ -69,7 +131,6 @@ class Instance:
         return self.url.split("//", 1)[1]
 
     def weight(self) -> float:
-        """Khởi động chậm: trọng số tăng dần từ 0.2 lên 1.0 trong SLOW_START_SEC giây."""
         if self.born is None or SLOW_START_SEC <= 0:
             return 1.0
         age = time.monotonic() - self.born
@@ -78,7 +139,6 @@ class Instance:
         return 0.2 + 0.8 * (age / SLOW_START_SEC)
 
     def score(self) -> float:
-        """Càng thấp càng nên được chọn. +1 để pod mới (active=0) không hút hết tải cùng lúc."""
         return (self.active + 1) / self.weight()
 
 
@@ -87,14 +147,16 @@ class Pool:
         self.name = name
         self.discovery_host = discovery_host
         self.port = port
-        self.max_concurrent = max_concurrent
-        self.fallback = Instance(cluster_url)       # Service ClusterIP (kube-proxy tự chọn pod)
-        self.instances: dict[str, Instance] = {}    # pod trực tiếp (chế độ rr / least / p2c)
+        self.fallback = Instance(cluster_url)
+        self.instances: dict[str, Instance] = {}
         self._rr = 0
         self._discovered_once = False
+        
+        # Tích hợp bộ Limiter với hàng đợi 300 slot cho mỗi pool
+        self.limiter = PriorityLimiter(max_concurrent, max_queue=300)
 
     def active_total(self) -> int:
-        return self.fallback.active + sum(i.active for i in self.instances.values())
+        return self.limiter.active
 
     def pick(self, exclude: Instance | None = None) -> Instance:
         if LB_MODE == "k8s" or not self.instances:
@@ -111,7 +173,7 @@ class Pool:
             return ordered[self._rr]
         if LB_MODE == "least":
             return min(candidates, key=lambda i: i.score())
-        # p2c
+        
         a, b = random.sample(candidates, 2)
         return a if a.score() <= b.score() else b
 
@@ -127,17 +189,17 @@ class Pool:
         for ip in ips:
             url = f"http://{ip}:{self.port}"
             if url not in self.instances:
-                # Lần dò đầu tiên: pod có sẵn nên không cần khởi động chậm
                 self.instances[url] = Instance(url, born=None if first else time.monotonic())
         for url in list(self.instances):
             if url.split("//", 1)[1].rsplit(":", 1)[0] not in ips:
-                del self.instances[url]    # pod đã biến mất; request đang chạy vẫn giữ tham chiếu
+                del self.instances[url]
         self._discovered_once = True
 
     def snapshot(self) -> dict:
         return {
-            "max_concurrent": self.max_concurrent,
-            "active_total": self.active_total(),
+            "max_concurrent": self.limiter.max_concurrent,
+            "active_total": self.limiter.active,
+            "queue_size": len(self.limiter.queue),
             "clusterip": {"url": self.fallback.url, "active": self.fallback.active, "served": self.fallback.served},
             "instances": [
                 {
@@ -152,14 +214,8 @@ class Pool:
 
 
 POOLS = {
-    "exam": Pool(
-        "exam", "http://exam-service:8001",
-        os.getenv("EXAM_DISCOVERY_HOST", "exam-service-headless"), 8001, 200,
-    ),
-    "auth": Pool(
-        "auth", "http://auth-service:8000",
-        os.getenv("AUTH_DISCOVERY_HOST", "auth-service-headless"), 8000, 100,
-    ),
+    "exam": Pool("exam", "http://exam-service:8001", os.getenv("EXAM_DISCOVERY_HOST", "exam-service-headless"), 8001, 200),
+    "auth": Pool("auth", "http://auth-service:8000", os.getenv("AUTH_DISCOVERY_HOST", "auth-service-headless"), 8000, 100),
 }
 
 SERVICE_ROUTES = {
@@ -172,12 +228,11 @@ SERVICE_ROUTES = {
     "/api/v1/attempts": "exam",
 }
 
-# Phân cấp độ ưu tiên API (đường dẫn khớp với endpoint thật của exam-service / auth-service)
 API_TIERS = [
-    (re.compile(r"^/api/v1/attempts/[^/]+/submit$"), 1),  # Tier 1: Nộp bài (không được xả)
-    (re.compile(r"^/api/v1/attempts/join$"), 1),          # Tier 1: Join phòng thi
-    (re.compile(r"^/api/v1/attempts/[^/]+/draft$"), 2),   # Tier 2: Lưu nháp
-    (re.compile(r"^/api/v1/users/login$"), 2),            # Tier 2: Đăng nhập
+    (re.compile(r"^/api/v1/attempts/[^/]+/submit$"), 1),
+    (re.compile(r"^/api/v1/attempts/join$"), 1),
+    (re.compile(r"^/api/v1/attempts/[^/]+/draft$"), 2),
+    (re.compile(r"^/api/v1/users/login$"), 2),
     (re.compile(r"^/api/v1/auth/login$"), 2),
 ]
 
@@ -200,19 +255,6 @@ def extract_role(request: Request) -> str | None:
         return None
 
 
-# ============================================================
-# 2. LOAD SHEDDING (FAIL FAST - KHÔNG NGÂM QUEUE)
-# ============================================================
-def should_drop_request(pool: Pool, tier: int) -> bool:
-    # Nếu đang chạm ngưỡng tối đa -> chỉ cho Tier 1 (nộp bài / join) đi qua
-    if pool.active_total() >= pool.max_concurrent:
-        return tier > 1
-    return False
-
-
-# ============================================================
-# 3. HTTP CLIENT POOL VÀ DÒ DANH SÁCH POD
-# ============================================================
 client: httpx.AsyncClient | None = None
 _tasks: list = []
 
@@ -223,7 +265,7 @@ async def discovery_loop(pool: Pool) -> None:
             await pool.refresh()
         except asyncio.CancelledError:
             raise
-        except Exception as exc:  # DNS lỗi: giữ danh sách cũ
+        except Exception as exc:
             print(f"[discovery] {pool.name}: {exc}")
         await asyncio.sleep(DISCOVERY_INTERVAL)
 
@@ -237,10 +279,8 @@ async def startup():
         max_connections=1500,
         keepalive_expiry=KEEPALIVE_EXPIRY,
     )
-    client = httpx.AsyncClient(
-        limits=limits,
-        timeout=httpx.Timeout(UPSTREAM_TIMEOUT, connect=3.0),
-    )
+    client = httpx.AsyncClient(limits=limits)
+    
     if LB_MODE != "k8s":
         for pool in POOLS.values():
             try:
@@ -248,7 +288,6 @@ async def startup():
             except Exception as exc:
                 print(f"[discovery] {pool.name} (lần đầu): {exc}")
             _tasks.append(asyncio.create_task(discovery_loop(pool)))
-    print(f"[gateway] LB_MODE={LB_MODE} pod={GATEWAY_POD}")
 
 
 @app.on_event("shutdown")
@@ -297,7 +336,7 @@ async def proxy(full_path: str, request: Request):
 
     if not is_public and role is None:
         return Response(
-            content='{"detail": "Token khong hop le hoac da het han"}',
+            content='{"detail": "Token không hợp lệ hoặc đã hết hạn"}',
             status_code=401,
             media_type="application/json",
         )
@@ -305,61 +344,85 @@ async def proxy(full_path: str, request: Request):
     pool = POOLS[service_name]
     tier = get_api_tier(path)
 
-    # BẢO VỆ HỆ THỐNG: quá tải thì từ chối ngay (503)
-    if should_drop_request(pool, tier):
+    # 1. Đưa vào hàng đợi ưu tiên thay vì từ chối thẳng
+    queue_timeout = QUEUE_TIMEOUTS.get(tier, 2.0)
+    acquired = await pool.limiter.acquire(priority=tier, timeout=queue_timeout)
+    
+    if not acquired:
+        # Hàng đợi chật hoặc đợi quá lâu -> Load Shedding
         return Response(
-            content='{"detail": "He thong dang qua tai, vui long thu lai sau"}',
+            content='{"detail": "Hệ thống đang quá tải, vui lòng thử lại sau"}',
             status_code=503,
-            headers={"Retry-After": "2", "x-gateway-pod": GATEWAY_POD},
+            headers={"Retry-After": "5", "x-gateway-pod": GATEWAY_POD},
             media_type="application/json",
         )
+
+    # Đã có slot xử lý -> Tính toán Timeout linh hoạt theo Tier
+    upstream_timeout = TIER_TIMEOUTS.get(tier, 10.0)
+    req_timeout = httpx.Timeout(upstream_timeout, connect=3.0)
 
     body = await request.body()
     headers = {k: v for k, v in request.headers.items() if k.lower() not in HOP_BY_HOP}
 
     inst = pool.pick()
     inst.active += 1
+    
+    upstream_response = None
     try:
         for attempt in (0, 1):
             try:
-                upstream_response = await client.request(
+                # Build request thủ công để dùng với client.send()
+                req_obj = client.build_request(
                     method=request.method,
                     url=f"{inst.url}{path}",
                     params=request.query_params,
                     headers=headers,
                     content=body,
+                    timeout=req_timeout
                 )
+                # 2. Bật stream=True để nhận kết quả dạng luồng thay vì chờ toàn bộ
+                upstream_response = await client.send(req_obj, stream=True)
                 break
             except (httpx.ConnectError, httpx.ConnectTimeout):
-                # Chưa gửi được request tới pod này -> thử lại một lần với pod khác (an toàn với mọi method)
                 if attempt == 0 and LB_MODE != "k8s":
                     inst.active = max(0, inst.active - 1)
                     inst = pool.pick(exclude=inst)
                     inst.active += 1
                     continue
                 raise
-
-        inst.served += 1
-        resp_headers = {
-            k: v for k, v in upstream_response.headers.items()
-            if k.lower() not in ("content-encoding", "transfer-encoding", "content-length")
-        }
-        resp_headers["x-gateway-instance"] = inst.label
-        resp_headers["x-gateway-pod"] = GATEWAY_POD
-        resp_headers["x-lb-mode"] = LB_MODE
-
+    except Exception:
+        inst.active = max(0, inst.active - 1)
+        pool.limiter.release()
         return Response(
-            content=upstream_response.content,
-            status_code=upstream_response.status_code,
-            headers=resp_headers,
-            media_type=upstream_response.headers.get("content-type"),
-        )
-    except httpx.RequestError:
-        return Response(
-            content='{"detail": "Service Unavailable"}',
+            content='{"detail": "Service Unavailable hoặc Timeout xử lý từ hệ thống"}',
             status_code=503,
-            headers={"x-gateway-pod": GATEWAY_POD, "x-gateway-instance": inst.label},
+            headers={"x-gateway-pod": GATEWAY_POD},
             media_type="application/json",
         )
-    finally:
-        inst.active = max(0, inst.active - 1)
+
+    # Nếu thành công
+    inst.served += 1
+    resp_headers = {
+        k: v for k, v in upstream_response.headers.items()
+        if k.lower() not in ("content-encoding", "transfer-encoding", "content-length")
+    }
+    resp_headers["x-gateway-instance"] = inst.label
+    resp_headers["x-gateway-pod"] = GATEWAY_POD
+    resp_headers["x-lb-mode"] = LB_MODE
+
+    # 3. Hàm chạy ngầm giải phóng tài nguyên sau khi stream kết thúc
+    async def cleanup():
+        try:
+            await upstream_response.aclose()
+        finally:
+            inst.active = max(0, inst.active - 1)
+            pool.limiter.release()
+
+    # Trả về dạng StreamingResponse để không chặn request của client
+    return StreamingResponse(
+        upstream_response.aiter_raw(), # Đẩy các khối byte về client ngay lập tức
+        status_code=upstream_response.status_code,
+        headers=resp_headers,
+        background=BackgroundTask(cleanup), # Giải phóng queue an toàn trong background
+        media_type=upstream_response.headers.get("content-type")
+    )
