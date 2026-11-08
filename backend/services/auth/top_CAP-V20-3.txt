@@ -1,7 +1,0 @@
-﻿api-gateway-5bccc97ddc-kq4rm    50m    173Mi    
-api-gateway-5bccc97ddc-l4h57    50m    178Mi    
-auth-service-848ddf55b-4nj2j    2m     67Mi     
-auth-service-848ddf55b-6xcf4    2m     67Mi     
-exam-service-6647c65cf7-k7gp7   225m   91Mi     
-pgbouncer-54cb577dc8-2w8wl      24m    9Mi      
-postgres-0                      93m    1006Mi   
