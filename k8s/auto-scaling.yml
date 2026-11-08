@@ -39,15 +39,15 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: exam-service
-  minReplicas: 5
-  maxReplicas: 15
+  minReplicas: 3
+  maxReplicas: 10
   metrics:
   - type: Resource
     resource:
       name: cpu
       target:
         type: Utilization
-        averageUtilization: 45   # % so với requests.cpu của pod
+        averageUtilization: 70   # % so với requests.cpu của pod
   behavior:
     scaleUp:
       stabilizationWindowSeconds: 0      # tăng ngay khi vượt ngưỡng
