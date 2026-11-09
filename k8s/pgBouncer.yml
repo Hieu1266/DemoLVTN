@@ -59,7 +59,7 @@ metadata:
   labels:
     app: pgbouncer
 spec:
-  replicas: 1
+  replicas: 2
   strategy:
     type: Recreate   # Giúp giải phóng RAM/CPU ngay lập tức khi rollout
   selector:
