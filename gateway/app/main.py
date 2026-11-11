@@ -28,16 +28,6 @@ KEEPALIVE_EXPIRY = float(os.getenv("KEEPALIVE_EXPIRY", "3"))
 DISABLE_KEEPALIVE = os.getenv("DISABLE_KEEPALIVE", "0") == "1"
 GATEWAY_POD = os.getenv("HOSTNAME", "gateway")
 
-# Giới hạn đồng thời THEO SỐ POD (đo từ viên gạch: exam pod 500m ~28 req/s, vỡ khi quá ~40 request đồng thời).
-# Tổng in-flight tới 1 pod = per_pod; mỗi gateway giữ per_pod * số_pod / số_gateway. 0 = tắt (dùng số cố định).
-EXAM_PER_POD = int(os.getenv("EXAM_PER_POD_CONCURRENCY", "30"))
-AUTH_PER_POD = int(os.getenv("AUTH_PER_POD_CONCURRENCY", "0"))
-MIN_CONCURRENT = int(os.getenv("MIN_CONCURRENT", "4"))
-GATEWAY_REPLICAS = max(1, int(os.getenv("GATEWAY_REPLICAS", "3")))     # dự phòng khi discovery gateway lỗi
-GATEWAY_DISCOVERY_HOST = os.getenv("GATEWAY_DISCOVERY_HOST", "api-gateway-headless")
-GATEWAY_PORT = int(os.getenv("GATEWAY_PORT", "8088"))
-gateway_count = GATEWAY_REPLICAS
-
 PUBLIC_PREFIXES = (
     "/api/v1/users/login",
     "/api/v1/users/register",
@@ -166,10 +156,8 @@ class Instance:
 
 class Pool:
     def __init__(self, name: str, cluster_url: str, discovery_host: str, port: int,
-                 max_concurrent: int, max_queue: int = 300, per_pod: int = 0):
+                 max_concurrent: int, max_queue: int = 300):
         self.name = name
-        self.per_pod = per_pod
-        self.base_concurrent = max_concurrent
         self.discovery_host = discovery_host
         self.port = port
         self.fallback = Instance(cluster_url)
@@ -195,16 +183,6 @@ class Pool:
         a, b = random.sample(candidates, 2)
         return a if a.score() <= b.score() else b
 
-    def update_capacity(self) -> None:
-        """Giới hạn đồng thời của gateway này = per_pod * số_pod / số_gateway (chỉ khi có discovery)."""
-        if self.per_pod > 0 and LB_MODE != "k8s" and self.instances:
-            cap = max(MIN_CONCURRENT, round(self.per_pod * len(self.instances) / max(1, gateway_count)))
-        else:
-            cap = self.base_concurrent
-        if cap != self.limiter.max_concurrent:
-            self.limiter.max_concurrent = cap
-            self.limiter._dispatch()        # giới hạn tăng -> cho request đang chờ vào
-
     async def refresh(self) -> None:
         loop = asyncio.get_running_loop()
         infos = await loop.getaddrinfo(
@@ -222,13 +200,11 @@ class Pool:
             if url.split("//", 1)[1].rsplit(":", 1)[0] not in ips:
                 del self.instances[url]
         self._discovered_once = True
-        self.update_capacity()
 
     def snapshot(self) -> dict:
         lim = self.limiter
         return {
             "max_concurrent": lim.max_concurrent,
-            "per_pod": self.per_pod,
             "active_total": lim.active,
             "queue_size": lim.waiting,
             "shed_by_tier": lim.shed,
@@ -242,11 +218,9 @@ class Pool:
 
 POOLS = {
     "exam": Pool("exam", "http://exam-service:8001",
-                 os.getenv("EXAM_DISCOVERY_HOST", "exam-service-headless"), 8001, 200,
-                 per_pod=EXAM_PER_POD),
+                 os.getenv("EXAM_DISCOVERY_HOST", "exam-service-headless"), 8001, 200),
     "auth": Pool("auth", "http://auth-service:8000",
-                 os.getenv("AUTH_DISCOVERY_HOST", "auth-service-headless"), 8000, 100,
-                 per_pod=AUTH_PER_POD),
+                 os.getenv("AUTH_DISCOVERY_HOST", "auth-service-headless"), 8000, 100),
 }
 
 SERVICE_ROUTES = {
@@ -316,25 +290,6 @@ async def discovery_loop(pool: Pool) -> None:
         await asyncio.sleep(DISCOVERY_INTERVAL)
 
 
-async def gateway_count_loop() -> None:
-    """Đếm số gateway pod Ready để chia đều giới hạn (HPA đổi số gateway -> giới hạn tự đổi theo)."""
-    global gateway_count
-    while True:
-        try:
-            infos = await asyncio.get_running_loop().getaddrinfo(
-                GATEWAY_DISCOVERY_HOST, GATEWAY_PORT, family=socket.AF_INET, type=socket.SOCK_STREAM)
-            n = len({info[4][0] for info in infos}) or GATEWAY_REPLICAS
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            n = GATEWAY_REPLICAS
-        if n != gateway_count:
-            gateway_count = n
-            for pool in POOLS.values():
-                pool.update_capacity()
-        await asyncio.sleep(DISCOVERY_INTERVAL)
-
-
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     global client
@@ -353,8 +308,6 @@ async def lifespan(_: FastAPI):
             except Exception as exc:
                 print(f"[discovery] {pool.name} (lần đầu): {exc}")
             tasks.append(asyncio.create_task(discovery_loop(pool)))
-        if any(p.per_pod > 0 for p in POOLS.values()):
-            tasks.append(asyncio.create_task(gateway_count_loop()))
     print(f"[gateway] LB_MODE={LB_MODE} pod={GATEWAY_POD}")
     try:
         yield
@@ -385,7 +338,6 @@ async def debug_state():
     return {
         "mode": LB_MODE,
         "gateway_pod": GATEWAY_POD,
-        "gateway_count": gateway_count,
         "pools": {name: pool.snapshot() for name, pool in POOLS.items()},
     }
 
