@@ -796,12 +796,52 @@ def get_attempt_result(
 
 # ===================================================================
 # 4. THÔNG TIN CHI TIẾT BÀI THI (ĐÃ FIX: ĐỌC DRAFT TỪ REDIS)
-# ===================================================================
+# # ===================================================================
+# @router.get("/{attempt_id}", response_model=JoinExamResponse)
+# def get_attempt_detail(
+#     attempt_id: UUID,
+#     db: Session = Depends(get_db),
+#     redis: Redis = Depends(get_redis), # <--- FIX 3: INJECT REDIS
+#     current_user: dict = Depends(get_current_user),
+# ):
+#     attempt = crud_attempt.get_by_id(db, attempt_id)
+#     if not attempt:
+#         raise HTTPException(status_code=404, detail="Không tìm thấy lượt làm bài thi!")
+
+#     exam = crud_exam.get_by_id(db, exam_id=attempt.exam_id)
+#     questions = crud_exam.get_exam_questions(db, exam_id=attempt.exam_id)
+#     duration = exam.duration_minutes if exam else 60
+
+#     # --- ƯU TIÊN ĐỌC BẢN NHÁP TỪ REDIS RAM ---
+#     saved_ans = {}
+#     draft_raw = redis.get(f"exam:draft:{attempt_id}")
+#     if draft_raw:
+#         try:
+#             saved_ans = json.loads(draft_raw)
+#         except Exception:
+#             saved_ans = {}
+#     if not saved_ans:
+#         saved_ans = _get_attr(attempt, ["saved_answers", "draft_answers"], {}) or {}
+
+#     resp = JoinExamResponse(
+#         attempt_id=attempt.attempt_id,
+#         exam_name=exam.exam_name if exam else "Bài thi",
+#         duration_minutes=duration,
+#         allow_review_answers=exam.allow_review_answers if exam else True,
+#         started_at=attempt.started_at,
+#         ends_at=calculate_ends_at(attempt.started_at, duration),
+#         saved_answers=saved_ans, # <--- Trả bản nháp Redis mới nhất cho UI
+#         questions=questions
+#     )
+#     db.close()
+#     return resp
+
+# --- TẠI DÒNG 817 TRONG attempt.py (HÀM get_attempt_detail) ---
 @router.get("/{attempt_id}", response_model=JoinExamResponse)
 def get_attempt_detail(
     attempt_id: UUID,
     db: Session = Depends(get_db),
-    redis: Redis = Depends(get_redis), # <--- FIX 3: INJECT REDIS
+    redis: Redis = Depends(get_redis),
     current_user: dict = Depends(get_current_user),
 ):
     attempt = crud_attempt.get_by_id(db, attempt_id)
@@ -812,14 +852,16 @@ def get_attempt_detail(
     questions = crud_exam.get_exam_questions(db, exam_id=attempt.exam_id)
     duration = exam.duration_minutes if exam else 60
 
-    # --- ƯU TIÊN ĐỌC BẢN NHÁP TỪ REDIS RAM ---
+    # --- BỌC BẪY LỖI AN TOÀN TẠI DÒNG 817 ---
     saved_ans = {}
-    draft_raw = redis.get(f"exam:draft:{attempt_id}")
-    if draft_raw:
-        try:
+    try:
+        draft_raw = redis.get(f"exam:draft:{attempt_id}")
+        if draft_raw:
             saved_ans = json.loads(draft_raw)
-        except Exception:
-            saved_ans = {}
+    except Exception as e:
+        # Nếu Redis ngắt kết nối, tự động fallback đọc từ DB
+        saved_ans = {}
+
     if not saved_ans:
         saved_ans = _get_attr(attempt, ["saved_answers", "draft_answers"], {}) or {}
 
@@ -830,11 +872,14 @@ def get_attempt_detail(
         allow_review_answers=exam.allow_review_answers if exam else True,
         started_at=attempt.started_at,
         ends_at=calculate_ends_at(attempt.started_at, duration),
-        saved_answers=saved_ans, # <--- Trả bản nháp Redis mới nhất cho UI
+        saved_answers=saved_ans,
         questions=questions
     )
     db.close()
     return resp
+
+
+
 
 
 # ===================================================================
