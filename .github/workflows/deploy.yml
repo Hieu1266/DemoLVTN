@@ -1,3 +1,291 @@
+# name: Build and Deploy to K8s
+
+# on:
+#   workflow_dispatch:
+#   push:
+#     branches:
+#       - main
+#     paths:
+#       - 'backend/services/**'
+#       - 'gateway/**'
+#       - 'frontend/**'
+#       - 'k8s/**'
+#       - '.github/workflows/**'
+
+# env:
+#   DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+#   DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+
+# jobs:
+#   # ==========================================
+#   # JOB 1: Build & Push các Backend Services + API Gateway
+#   # ==========================================
+#   build-backend:
+#     runs-on: ubuntu-latest
+#     strategy:
+#       matrix:
+#         include:
+#           - service: auth
+#             context: ./backend/services/auth
+#             image: ssl-auth-service
+#           - service: exam
+#             context: ./backend/services/exam
+#             image: ssl-exam-service
+#           # BỔ SUNG: Build Image cho API Gateway
+#           - service: gateway
+#             context: ./gateway
+#             image: ssl-api-gateway
+
+#     steps:
+#       - name: Checkout Code
+#         uses: actions/checkout@v4
+
+#       - name: Log in to Docker Hub
+#         uses: docker/login-action@v3
+#         with:
+#           username: ${{ env.DOCKER_USERNAME }}
+#           password: ${{ env.DOCKER_PASSWORD }}
+
+#       - name: Set up Docker Buildx
+#         uses: docker/setup-buildx-action@v3
+
+#       - name: Build and Push Image
+#         uses: docker/build-push-action@v5
+#         with:
+#           context: ${{ matrix.context }}
+#           file: ${{ matrix.context }}/Dockerfile
+#           push: true
+#           tags: ${{ env.DOCKER_USERNAME }}/${{ matrix.image }}:latest
+#           cache-from: type=gha,scope=${{ matrix.image }}
+#           cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+
+#   # ==========================================
+#   # JOB 2: Build & Push Next.js Frontend
+#   # ==========================================
+#   build-frontend:
+#     runs-on: ubuntu-latest
+#     steps:
+#       - name: Checkout Code
+#         uses: actions/checkout@v4
+
+#       - name: Log in to Docker Hub
+#         uses: docker/login-action@v3
+#         with:
+#           username: ${{ env.DOCKER_USERNAME }}
+#           password: ${{ env.DOCKER_PASSWORD }}
+
+#       - name: Set up Docker Buildx
+#         uses: docker/setup-buildx-action@v3
+
+#       - name: Build and Push Frontend Image
+#         uses: docker/build-push-action@v5
+#         with:
+#           context: ./frontend
+#           file: ./frontend/Dockerfile
+#           push: true
+#           tags: ${{ env.DOCKER_USERNAME }}/ssl-frontend:latest
+#           cache-from: type=gha,scope=frontend
+#           cache-to: type=gha,mode=max,scope=frontend
+#           build-args: |
+#             NEXT_PUBLIC_AUTH_API_URL=${{ secrets.NEXT_PUBLIC_AUTH_API_URL }}
+#             NEXT_PUBLIC_EXAM_API_URL=${{ secrets.NEXT_PUBLIC_EXAM_API_URL }}
+
+#   # ==========================================
+#   # JOB 3: Deploy lên Kubernetes (self-hosted runner)
+#   # ==========================================
+#   deploy-k8s:
+#     needs: [build-backend, build-frontend]
+#     runs-on: self-hosted
+#     steps:
+#       - name: Checkout Code
+#         uses: actions/checkout@v4
+
+#       # Chờ K8s API server sẵn sàng
+#       - name: Wait for Kubernetes
+#         shell: powershell
+#         run: |
+#           for ($i = 0; $i -lt 12; $i++) {
+#             kubectl get nodes 2>$null | Out-Null
+#             if ($LASTEXITCODE -eq 0) { exit 0 }
+#             Start-Sleep -Seconds 10
+#           }
+#           Write-Host "Khong ket noi duoc Kubernetes. Hay kiem tra Docker Desktop da bat Kubernetes chuong."
+#           exit 1
+
+#       # Kiểm tra Secrets
+#       - name: Check required secrets
+#         shell: powershell
+#         env:
+#           SECRET_KEY: ${{ secrets.SECRET_KEY }}
+#           CLIENT_ID: ${{ secrets.CLIENT_ID }}
+#           CLIENT_SECRET_KEY: ${{ secrets.CLIENT_SECRET_KEY }}
+#           DB_USER: ${{ secrets.DB_USER }}
+#           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+#           FRONTEND_HOST: ${{ secrets.NEXT_PUBLIC_FRONTEND }}
+#         run: |
+#           $missing = @()
+#           foreach ($n in @('SECRET_KEY', 'CLIENT_ID', 'CLIENT_SECRET_KEY', 'DB_USER', 'DB_PASSWORD', 'FRONTEND_HOST')) {
+#             if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($n))) { $missing += $n }
+#           }
+#           if ($missing.Count -gt 0) {
+#             Write-Host "Thieu secret: $($missing -join ', ')"
+#             exit 1
+#           }
+
+#       # Đảm bảo Namespace 'ssl' tồn tại
+#       - name: Create namespace
+#         shell: powershell
+#         run: |
+#           kubectl create namespace ssl --dry-run=client -o yaml | kubectl apply -f -
+#           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+#       # Cập nhật backend-secrets
+#       - name: Create backend secret
+#         shell: powershell
+#         env:
+#           SECRET_KEY: ${{ secrets.SECRET_KEY }}
+#           CLIENT_ID: ${{ secrets.CLIENT_ID }}
+#           CLIENT_SECRET_KEY: ${{ secrets.CLIENT_SECRET_KEY }}
+#           DB_USER: ${{ secrets.DB_USER }}
+#           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+#           FRONTEND_HOST: ${{ secrets.NEXT_PUBLIC_FRONTEND }}
+#         run: |
+#           $u = [uri]::EscapeDataString($env:DB_USER)
+#           $p = [uri]::EscapeDataString($env:DB_PASSWORD)
+#           $usersDb = "postgresql://${u}:${p}@postgres:5432/users_ssl_db"
+#           $examDb  = "postgresql://${u}:${p}@postgres:5432/exams_ssl_db"
+
+#           kubectl create secret generic backend-secrets -n ssl `
+#             --from-literal=SECRET_KEY="$env:SECRET_KEY" `
+#             --from-literal=CLIENT_ID="$env:CLIENT_ID" `
+#             --from-literal=CLIENT_SECRET_KEY="$env:CLIENT_SECRET_KEY" `
+#             --from-literal=DB_USER="$env:DB_USER" `
+#             --from-literal=DB_PASSWORD="$env:DB_PASSWORD" `
+#             --from-literal=USERS_DB_URL="$usersDb" `
+#             --from-literal=EXAM_DB_URL="$examDb" `
+#             --from-literal=FRONTEND_HOST="$env:FRONTEND_HOST" `
+#             --from-literal=BACKEND_CORS_ORIGINS="$env:FRONTEND_HOST" `
+#             --dry-run=client -o yaml | kubectl apply -n ssl -f -
+#           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+#       # Khởi chạy Postgres & Tạo Database
+#       - name: Deploy Postgres and ensure databases
+#         shell: powershell
+#         env:
+#           DB_USER: ${{ secrets.DB_USER }}
+#         run: |
+#           kubectl apply -n ssl -f k8s/postgres.yml
+#           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+#           kubectl rollout status -n ssl statefulset/postgres --timeout=300s
+#           if ($LASTEXITCODE -ne 0) { exit 1 }
+
+#           foreach ($db in @('users_ssl_db', 'exams_ssl_db')) {
+#             $exists = kubectl exec -n ssl postgres-0 -- psql -U $env:DB_USER -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='$db'"
+#             if ("$exists".Trim() -ne '1') {
+#               Write-Host "Create database $db"
+#               kubectl exec -n ssl postgres-0 -- psql -U $env:DB_USER -d postgres -c "CREATE DATABASE $db"
+#               if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+#             }
+#           }
+
+#       # BỔ SUNG: Apply file gateway.yml cùng các service khác
+#       - name: Deploy Manifests
+#         shell: powershell
+#         run: |
+#           foreach ($f in @('backend', 'kafka', 'gateway', 'frontend', 'auto-scaling')) {
+#             Write-Host "Apply k8s/$f.yml"
+#             (Get-Content "k8s/$f.yml" -Raw) -replace 'DOCKER_USER', $env:DOCKER_USERNAME | kubectl apply -n ssl -f -
+#             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+#           }
+
+#           # BỔ SUNG: Restart api-gateway để kéo Image mới nhất
+#           foreach ($d in @('auth-service', 'exam-service', 'api-gateway', 'frontend')) {
+#             kubectl rollout restart -n ssl deployment/$d
+#             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+#           }
+
+#           # BỔ SUNG: Kiểm tra trạng thái sẵn sàng của api-gateway
+#           foreach ($d in @('auth-service', 'exam-service', 'api-gateway', 'frontend')) {
+#             kubectl rollout status -n ssl deployment/$d --timeout=240s
+#             if ($LASTEXITCODE -ne 0) {
+#               Write-Host "=== DIAGNOSTICS: $d khong san sang ==="
+#               kubectl get pods -n ssl -o wide
+#               kubectl describe pods -n ssl -l app=$d
+#               kubectl logs -n ssl -l app=$d --tail=60 --prefix
+#               kubectl get events -n ssl --sort-by=.lastTimestamp
+#               exit 1
+#             }
+#           }
+
+
+
+# # 1. Tạo Secret kết nối DB & PgBouncer Userlist
+#       - name: Create backend secret and PgBouncer userlist
+#         shell: powershell
+#         env:
+#           SECRET_KEY: ${{ secrets.SECRET_KEY }}
+#           CLIENT_ID: ${{ secrets.CLIENT_ID }}
+#           CLIENT_SECRET_KEY: ${{ secrets.CLIENT_SECRET_KEY }}
+#           DB_USER: ${{ secrets.DB_USER }}
+#           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+#           FRONTEND_HOST: ${{ secrets.NEXT_PUBLIC_FRONTEND }}
+#         run: |
+#           $u = [uri]::EscapeDataString($env:DB_USER)
+#           $p = [uri]::EscapeDataString($env:DB_PASSWORD)
+          
+#           # ĐIỀU CHỈNH: Trỏ DB_URL qua PgBouncer (cổng 6432) thay vì Postgres trực tiếp
+#           $usersDb = "postgresql://${u}:${p}@pgbouncer:6432/users_ssl_db"
+#           $examDb  = "postgresql://${u}:${p}@pgbouncer:6432/exams_ssl_db"
+
+#           kubectl create secret generic backend-secrets -n ssl `
+#             --from-literal=SECRET_KEY="$env:SECRET_KEY" `
+#             --from-literal=CLIENT_ID="$env:CLIENT_ID" `
+#             --from-literal=CLIENT_SECRET_KEY="$env:CLIENT_SECRET_KEY" `
+#             --from-literal=DB_USER="$env:DB_USER" `
+#             --from-literal=DB_PASSWORD="$env:DB_PASSWORD" `
+#             --from-literal=USERS_DB_URL="$usersDb" `
+#             --from-literal=EXAM_DB_URL="$examDb" `
+#             --from-literal=FRONTEND_HOST="$env:FRONTEND_HOST" `
+#             --from-literal=BACKEND_CORS_ORIGINS="$env:FRONTEND_HOST" `
+#             --dry-run=client -o yaml | kubectl apply -n ssl -f -
+#           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+#           # BỔ SUNG: Tạo file userlist.txt cho PgBouncer theo định dạng "username" "password"
+#           $userlistContent = """$env:DB_USER"" ""$env:DB_PASSWORD"""
+#           kubectl create secret generic pgbouncer-userlist -n ssl `
+#             --from-literal=userlist.txt="$userlistContent" `
+#             --dry-run=client -o yaml | kubectl apply -n ssl -f -
+#           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+#       # 2. Deploy Postgres, PgBouncer và các Service theo thứ tự
+#       - name: Deploy Manifests
+#         shell: powershell
+#         run: |
+#           # Apply Postgres & PgBouncer trước
+#           foreach ($f in @('postgres', 'pgbouncer', 'kafka', 'backend', 'gateway', 'frontend', 'auto-scaling')) {
+#             Write-Host "Apply k8s/$f.yml"
+#             (Get-Content "k8s/$f.yml" -Raw) -replace 'DOCKER_USER', $env:DOCKER_USERNAME | kubectl apply -n ssl -f -
+#             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+#           }
+
+#           # Restart deployments để nhận secret và kết nối PgBouncer mới
+#           foreach ($d in @('pgbouncer', 'auth-service', 'exam-service', 'api-gateway', 'frontend')) {
+#             kubectl rollout restart -n ssl deployment/$d
+#             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+#           }
+
+
+
+
+#       - name: Show result
+#         shell: powershell
+#         run: |
+#           kubectl get pods,svc -n ssl
+
+
+
+# ___________________________________________________________________________
 name: Build and Deploy to K8s
 
 on:
@@ -31,7 +319,6 @@ jobs:
           - service: exam
             context: ./backend/services/exam
             image: ssl-exam-service
-          # BỔ SUNG: Build Image cho API Gateway
           - service: gateway
             context: ./gateway
             image: ssl-api-gateway
@@ -139,8 +426,8 @@ jobs:
           kubectl create namespace ssl --dry-run=client -o yaml | kubectl apply -f -
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      # Cập nhật backend-secrets
-      - name: Create backend secret
+      # 1. Tạo Secret kết nối DB, Redis & PgBouncer Userlist
+      - name: Create backend secret and PgBouncer userlist
         shell: powershell
         env:
           SECRET_KEY: ${{ secrets.SECRET_KEY }}
@@ -152,8 +439,10 @@ jobs:
         run: |
           $u = [uri]::EscapeDataString($env:DB_USER)
           $p = [uri]::EscapeDataString($env:DB_PASSWORD)
-          $usersDb = "postgresql://${u}:${p}@postgres:5432/users_ssl_db"
-          $examDb  = "postgresql://${u}:${p}@postgres:5432/exams_ssl_db"
+          
+          # DB_URL trỏ qua PgBouncer (cổng 6432)
+          $usersDb = "postgresql://${u}:${p}@pgbouncer:6432/users_ssl_db"
+          $examDb  = "postgresql://${u}:${p}@pgbouncer:6432/exams_ssl_db"
 
           kubectl create secret generic backend-secrets -n ssl `
             --from-literal=SECRET_KEY="$env:SECRET_KEY" `
@@ -163,12 +452,21 @@ jobs:
             --from-literal=DB_PASSWORD="$env:DB_PASSWORD" `
             --from-literal=USERS_DB_URL="$usersDb" `
             --from-literal=EXAM_DB_URL="$examDb" `
+            --from-literal=REDIS_HOST="redis" `
+            --from-literal=REDIS_PORT="6379" `
             --from-literal=FRONTEND_HOST="$env:FRONTEND_HOST" `
             --from-literal=BACKEND_CORS_ORIGINS="$env:FRONTEND_HOST" `
             --dry-run=client -o yaml | kubectl apply -n ssl -f -
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      # Khởi chạy Postgres & Tạo Database
+          # Tạo file userlist.txt cho PgBouncer
+          $userlistContent = """$env:DB_USER"" ""$env:DB_PASSWORD"""
+          kubectl create secret generic pgbouncer-userlist -n ssl `
+            --from-literal=userlist.txt="$userlistContent" `
+            --dry-run=client -o yaml | kubectl apply -n ssl -f -
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      # 2. Khởi chạy Postgres & Ensure Databases
       - name: Deploy Postgres and ensure databases
         shell: powershell
         env:
@@ -189,23 +487,24 @@ jobs:
             }
           }
 
-      # BỔ SUNG: Apply file gateway.yml cùng các service khác
+      # 3. Deploy tất cả Manifests (bao gồm redis.yml)
       - name: Deploy Manifests
         shell: powershell
         run: |
-          foreach ($f in @('backend', 'kafka', 'gateway', 'frontend', 'auto-scaling')) {
+          # Đã bổ sung 'redis' vào mảng bên dưới
+          foreach ($f in @('postgres', 'pgbouncer', 'redis', 'kafka', 'backend', 'gateway', 'frontend', 'auto-scaling')) {
             Write-Host "Apply k8s/$f.yml"
             (Get-Content "k8s/$f.yml" -Raw) -replace 'DOCKER_USER', $env:DOCKER_USERNAME | kubectl apply -n ssl -f -
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
 
-          # BỔ SUNG: Restart api-gateway để kéo Image mới nhất
-          foreach ($d in @('auth-service', 'exam-service', 'api-gateway', 'frontend')) {
+          # Restart Deployments để nhận Secret và kết nối mới
+          foreach ($d in @('pgbouncer', 'redis', 'auth-service', 'exam-service', 'api-gateway', 'frontend')) {
             kubectl rollout restart -n ssl deployment/$d
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
 
-          # BỔ SUNG: Kiểm tra trạng thái sẵn sàng của api-gateway
+          # Kiểm tra trạng thái sẵn sàng
           foreach ($d in @('auth-service', 'exam-service', 'api-gateway', 'frontend')) {
             kubectl rollout status -n ssl deployment/$d --timeout=240s
             if ($LASTEXITCODE -ne 0) {
@@ -217,66 +516,6 @@ jobs:
               exit 1
             }
           }
-
-
-
-# 1. Tạo Secret kết nối DB & PgBouncer Userlist
-      - name: Create backend secret and PgBouncer userlist
-        shell: powershell
-        env:
-          SECRET_KEY: ${{ secrets.SECRET_KEY }}
-          CLIENT_ID: ${{ secrets.CLIENT_ID }}
-          CLIENT_SECRET_KEY: ${{ secrets.CLIENT_SECRET_KEY }}
-          DB_USER: ${{ secrets.DB_USER }}
-          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
-          FRONTEND_HOST: ${{ secrets.NEXT_PUBLIC_FRONTEND }}
-        run: |
-          $u = [uri]::EscapeDataString($env:DB_USER)
-          $p = [uri]::EscapeDataString($env:DB_PASSWORD)
-          
-          # ĐIỀU CHỈNH: Trỏ DB_URL qua PgBouncer (cổng 6432) thay vì Postgres trực tiếp
-          $usersDb = "postgresql://${u}:${p}@pgbouncer:6432/users_ssl_db"
-          $examDb  = "postgresql://${u}:${p}@pgbouncer:6432/exams_ssl_db"
-
-          kubectl create secret generic backend-secrets -n ssl `
-            --from-literal=SECRET_KEY="$env:SECRET_KEY" `
-            --from-literal=CLIENT_ID="$env:CLIENT_ID" `
-            --from-literal=CLIENT_SECRET_KEY="$env:CLIENT_SECRET_KEY" `
-            --from-literal=DB_USER="$env:DB_USER" `
-            --from-literal=DB_PASSWORD="$env:DB_PASSWORD" `
-            --from-literal=USERS_DB_URL="$usersDb" `
-            --from-literal=EXAM_DB_URL="$examDb" `
-            --from-literal=FRONTEND_HOST="$env:FRONTEND_HOST" `
-            --from-literal=BACKEND_CORS_ORIGINS="$env:FRONTEND_HOST" `
-            --dry-run=client -o yaml | kubectl apply -n ssl -f -
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-          # BỔ SUNG: Tạo file userlist.txt cho PgBouncer theo định dạng "username" "password"
-          $userlistContent = """$env:DB_USER"" ""$env:DB_PASSWORD"""
-          kubectl create secret generic pgbouncer-userlist -n ssl `
-            --from-literal=userlist.txt="$userlistContent" `
-            --dry-run=client -o yaml | kubectl apply -n ssl -f -
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      # 2. Deploy Postgres, PgBouncer và các Service theo thứ tự
-      - name: Deploy Manifests
-        shell: powershell
-        run: |
-          # Apply Postgres & PgBouncer trước
-          foreach ($f in @('postgres', 'pgbouncer', 'kafka', 'backend', 'gateway', 'frontend', 'auto-scaling')) {
-            Write-Host "Apply k8s/$f.yml"
-            (Get-Content "k8s/$f.yml" -Raw) -replace 'DOCKER_USER', $env:DOCKER_USERNAME | kubectl apply -n ssl -f -
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          }
-
-          # Restart deployments để nhận secret và kết nối PgBouncer mới
-          foreach ($d in @('pgbouncer', 'auth-service', 'exam-service', 'api-gateway', 'frontend')) {
-            kubectl rollout restart -n ssl deployment/$d
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          }
-
-
-
 
       - name: Show result
         shell: powershell
