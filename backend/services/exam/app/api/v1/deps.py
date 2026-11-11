@@ -57,32 +57,31 @@
 # _______________________________________________________________
 
 import os
-from typing import Any, Dict, Generator
-from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-import jwt
 import redis
+from typing import Generator, Dict, Any
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+import jwt
 from sqlmodel import Session
 
-from app.core.config import settings
 from app.core.database import engine
+from app.core.config import settings
 
 security = HTTPBearer()
 
-# Lấy host từ biến môi trường, mặc định là 'localhost' nếu chạy local
+# Tự động lấy host từ biến môi trường, mặc định fallback về localhost
 REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
 
-# Thêm timeout 1-2s để nếu Redis ngắt kết nối thì API không bị ngâm/treo
+# Khai báo kết nối Redis với Timeout ngắn (1 giây) để không làm ngâm request
 redis_client = redis.Redis(
     host=REDIS_HOST,
     port=REDIS_PORT,
     db=0,
     decode_responses=True,
-    socket_connect_timeout=2,
-    socket_timeout=2,
+    socket_connect_timeout=1,
+    socket_timeout=1
 )
-
 
 def get_redis() -> redis.Redis:
     return redis_client
