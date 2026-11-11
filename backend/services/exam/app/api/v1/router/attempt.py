@@ -577,13 +577,19 @@ def join_exam(
         questions = crud_exam.get_exam_questions(db, exam_id=exam.exam_id)
         
         # --- FIX 2: ƯU TIÊN ĐỌC BẢN NHÁP TỪ REDIS RAM ---
+        # --- SỬA TẠI DÒNG 581 CỦA attempt.py ---
         saved_ans = {}
-        draft_raw = redis.get(f"exam:draft:{active_attempt.attempt_id}")
-        if draft_raw:
-            try:
+        try:
+            # Thử đọc draft từ Redis RAM
+            draft_raw = redis.get(f"exam:draft:{active_attempt.attempt_id}")
+            if draft_raw:
                 saved_ans = json.loads(draft_raw)
-            except Exception:
-                saved_ans = {}
+        except Exception as e:
+            # Nếu Redis rớt kết nối (ConnectionRefused), log lại và fallback về DB
+            print(f"[WARNING] Không kết nối được Redis ({e}), fallback sang DB.")
+            saved_ans = {}
+
+        # Nếu Redis không có dữ liệu hoặc bị lỗi kết nối -> Lấy từ PostgreSQL
         if not saved_ans:
             saved_ans = _get_attr(active_attempt, ["saved_answers", "draft_answers"], {}) or {}
 
