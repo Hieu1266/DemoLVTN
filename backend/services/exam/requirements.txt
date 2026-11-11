@@ -8,3 +8,4 @@ pyjwt
 python-dotenv
 pydantic-settings
 psycopg[binary]
+redis

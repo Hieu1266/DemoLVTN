@@ -7,7 +7,13 @@ from sqlmodel import Session
 from app.core.database import engine
 from app.core.config import settings
 
+import redis
 security = HTTPBearer()
+
+redis_client = redis.Redis(host="redis", port=6379, db=0, decode_responses=True)
+
+def get_redis():
+    return redis_client
 
 
 def get_db() -> Generator[Session, None, None]:
