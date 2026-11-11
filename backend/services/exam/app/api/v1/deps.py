@@ -1,29 +1,99 @@
-from typing import Generator, Dict, Any
+# from typing import Generator, Dict, Any
+# from fastapi import Depends, HTTPException, status
+# from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+# import jwt
+# from sqlmodel import Session
+
+# from app.core.database import engine
+# from app.core.config import settings
+
+# security = HTTPBearer()
+
+# # redis_client = redis.Redis(host="redis", port=6379, db=0, decode_responses=True)
+
+# # def get_redis():
+# #     return redis_client
+
+
+# def get_db() -> Generator[Session, None, None]:
+#     # expire_on_commit=False: sau commit vẫn đọc được thuộc tính mà không phải SELECT lại
+#     # (SELECT lại = xin thêm một kết nối từ PgBouncer)
+#     with Session(engine, expire_on_commit=False) as session:
+#         yield session
+
+
+# async def get_current_user(   # async: chỉ giải mã JWT (CPU nhẹ), khỏi tốn một lượt threadpool
+#     credentials: HTTPAuthorizationCredentials = Depends(security),
+# ) -> Dict[str, Any]:
+#     token = credentials.credentials
+#     try:
+#         payload = jwt.decode(
+#             token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM]
+#         )
+#         user_id: str = payload.get("sub")
+#         role: str = payload.get("role")
+
+#         if user_id is None:
+#             raise HTTPException(
+#                 status_code=status.HTTP_401_UNAUTHORIZED,
+#                 detail="Token không chứa thông tin người dùng hợp lệ",
+#             )
+#         return {"user_id": user_id, "role": role}
+
+#     except jwt.ExpiredSignatureError:
+#         raise HTTPException(
+#             status_code=status.HTTP_401_UNAUTHORIZED,
+#             detail="Phiên đăng nhập đã hết hạn",
+#         )
+#     except jwt.PyJWTError:
+#         raise HTTPException(
+#             status_code=status.HTTP_401_UNAUTHORIZED,
+#             detail="Token xác thực không hợp lệ",
+#         )
+
+
+
+
+# _______________________________________________________________
+
+import os
+from typing import Any, Dict, Generator
 from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 import jwt
+import redis
 from sqlmodel import Session
 
-from app.core.database import engine
 from app.core.config import settings
+from app.core.database import engine
 
-import redis
 security = HTTPBearer()
 
-redis_client = redis.Redis(host="redis", port=6379, db=0, decode_responses=True)
+# Lấy host từ biến môi trường, mặc định là 'localhost' nếu chạy local
+REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
+REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
 
-def get_redis():
+# Thêm timeout 1-2s để nếu Redis ngắt kết nối thì API không bị ngâm/treo
+redis_client = redis.Redis(
+    host=REDIS_HOST,
+    port=REDIS_PORT,
+    db=0,
+    decode_responses=True,
+    socket_connect_timeout=2,
+    socket_timeout=2,
+)
+
+
+def get_redis() -> redis.Redis:
     return redis_client
 
 
 def get_db() -> Generator[Session, None, None]:
-    # expire_on_commit=False: sau commit vẫn đọc được thuộc tính mà không phải SELECT lại
-    # (SELECT lại = xin thêm một kết nối từ PgBouncer)
     with Session(engine, expire_on_commit=False) as session:
         yield session
 
 
-async def get_current_user(   # async: chỉ giải mã JWT (CPU nhẹ), khỏi tốn một lượt threadpool
+async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
 ) -> Dict[str, Any]:
     token = credentials.credentials
