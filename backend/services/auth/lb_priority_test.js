@@ -275,11 +275,7 @@ export function userFlow() {
   const withName = (name) => ({ headers, tags: { name } });
 
   // 1. JOIN
-  const joinRes = http.post(
-    `${GATEWAY_URL}/attempts/join`,
-    JSON.stringify({ access_code: ACCESS_CODE }),
-    withName('attempts/join')
-  );
+  const joinRes = http.post(`${GATEWAY_URL}/attempts/join`, JSON.stringify({ access_code: ACCESS_CODE }), withName('attempts/join'));
   record('join', joinRes, joinTrend);
 
   if (joinRes.status !== 200 && joinRes.status !== 201) {
@@ -304,21 +300,13 @@ export function userFlow() {
   });
 
   // 2. DRAFT
-  const draftRes = http.put(
-    `${GATEWAY_URL}/attempts/${attemptId}/draft`,
-    JSON.stringify({ answers }),
-    withName('attempts/draft')
-  );
+  const draftRes = http.put(`${GATEWAY_URL}/attempts/${attemptId}/draft`, JSON.stringify({ answers }), withName('attempts/draft'));
   record('draft', draftRes, draftTrend);
   check(draftRes, { 'draft 200/503': (r) => r.status === 200 || r.status === 503 });
   sleep(1);
 
   // 3. SUBMIT (khong duoc phep bi xa)
-  const submitRes = http.post(
-    `${GATEWAY_URL}/attempts/${attemptId}/submit`,
-    JSON.stringify({ answers }),
-    withName('attempts/submit')
-  );
+  const submitRes = http.post(`${GATEWAY_URL}/attempts/${attemptId}/submit`, JSON.stringify({ answers }), withName('attempts/submit'));
   record('submit', submitRes, submitTrend);
   check(submitRes, { 'submit 200': (r) => r.status === 200 });
   sleep(1);

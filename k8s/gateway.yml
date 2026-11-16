@@ -25,6 +25,11 @@ spec:
         ports:
         - containerPort: 8088
         env:
+        
+        - name: LB_MODE
+          value: "p2c"
+        - name: SLOW_START
+          value: "30"
         # Điều hướng trực tiếp tới K8s Service DNS nội bộ cụm
         - name: AUTH_SERVICE_URL
           value: "http://auth-service:8000"

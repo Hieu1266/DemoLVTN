@@ -57,7 +57,7 @@ RETRY_AFTER = {1: "2", 2: "3", 3: "5"}
 
 
 # ============================================================
-# 1. LIMITER ƯU TIÊN (cancel-safe, không rò slot)
+# 1. LIMITER ƯU TIÊN
 # ============================================================
 class PriorityLimiter:
     def __init__(self, max_concurrent: int, max_queue: int = 300):
@@ -155,8 +155,7 @@ class Instance:
 
 
 class Pool:
-    def __init__(self, name: str, cluster_url: str, discovery_host: str, port: int,
-                 max_concurrent: int, max_queue: int = 300):
+    def __init__(self, name: str, cluster_url: str, discovery_host: str, port: int, max_concurrent: int, max_queue: int = 300):
         self.name = name
         self.discovery_host = discovery_host
         self.port = port
@@ -217,10 +216,8 @@ class Pool:
 
 
 POOLS = {
-    "exam": Pool("exam", "http://exam-service:8001",
-                 os.getenv("EXAM_DISCOVERY_HOST", "exam-service-headless"), 8001, 200),
-    "auth": Pool("auth", "http://auth-service:8000",
-                 os.getenv("AUTH_DISCOVERY_HOST", "auth-service-headless"), 8000, 100),
+    "exam": Pool("exam", "http://exam-service:8001", os.getenv("EXAM_DISCOVERY_HOST", "exam-service-headless"), 8001, 200),
+    "auth": Pool("auth", "http://auth-service:8000", os.getenv("AUTH_DISCOVERY_HOST", "auth-service-headless"), 8000, 100),
 }
 
 SERVICE_ROUTES = {
@@ -345,9 +342,7 @@ async def debug_state():
 # ============================================================
 # 4. PROXY
 # ============================================================
-async def forward(pool: Pool, request: Request, path: str, headers: dict,
-                  body: bytes, timeout: float) -> tuple[httpx.Response, Instance]:
-    """Gửi request tới pod. Chỉ retry khi LỖI KẾT NỐI (request chưa tới pod nên an toàn với mọi method)."""
+async def forward(pool: Pool, request: Request, path: str, headers: dict,body: bytes, timeout: float) -> tuple[httpx.Response, Instance]:
     inst = pool.pick()
     for attempt in (0, 1):
         used = inst
@@ -397,8 +392,7 @@ async def proxy(full_path: str, request: Request):
     tier = get_api_tier(path)
 
     if not await pool.limiter.acquire(tier, QUEUE_TIMEOUTS[tier]):
-        return json_error("Hệ thống đang quá tải, vui lòng thử lại sau", 503,
-                          {"Retry-After": RETRY_AFTER[tier]})
+        return json_error("Hệ thống đang quá tải, vui lòng thử lại sau", 503, {"Retry-After": RETRY_AFTER[tier]})
 
     # Từ đây mọi đường thoát đều đi qua finally -> luôn trả slot
     try:

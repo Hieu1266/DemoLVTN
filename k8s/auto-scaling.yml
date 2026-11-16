@@ -1,7 +1,17 @@
+# ============================================================
+# HPA - namespace ssl
+# Ngưỡng exam-service = max(CPU, tải thực từ gateway). HPA lấy số pod lớn nhất trong các metric.
+#
+# Công thức dùng để TÍNH TRƯỚC các con số bên dưới (không đưa trực tiếp vào HPA):
+#   per_pod  = điểm gãy đo được của 1 pod (exam 500m: ~30 request đồng thời)  -> EXAM_PER_POD_CONCURRENCY
+#   Pods_cần = max(Pods_CPU, Pods_RAM, Pods_DB)                               -> dùng cho minReplicas theo lịch thi
+#   Ngưỡng tải gateway = 0.7 (scale khi mỗi pod dùng > 70% per_pod, chừa dư cho T_ready của pod mới)
+# ============================================================
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
   name: auth-service
+  namespace: ssl
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
@@ -16,13 +26,15 @@ spec:
       target:
         type: Utilization
         averageUtilization: 60   # % so với requests.cpu của pod
+  # auth chưa có metric tải gateway vì AUTH_PER_POD_CONCURRENCY=0 (giới hạn cố định).
+  # Khi đo xong "viên gạch" auth và đặt AUTH_PER_POD_CONCURRENCY > 0, thêm khối External giống exam (pool: auth).
   behavior:
     scaleUp:
       stabilizationWindowSeconds: 0      # tăng ngay khi vượt ngưỡng
       policies:
       - type: Pods
         value: 2
-        periodSeconds: 10                # mỗi 30 giây tăng tối đa 2 pod
+        periodSeconds: 10                # mỗi 10 giây tăng tối đa 2 pod
     scaleDown:
       stabilizationWindowSeconds: 120    # tải giảm kéo dài 2 phút mới bớt pod
       policies:
@@ -34,6 +46,7 @@ apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
   name: exam-service
+  namespace: ssl
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
@@ -48,25 +61,39 @@ spec:
       target:
         type: Utilization
         averageUtilization: 60   # % so với requests.cpu của pod
+  # Ngưỡng theo tải thực: (đang chạy + đang chờ) / giới hạn đồng thời của gateway.
+  # Chỉ có nghĩa khi gateway chạy LB_MODE != k8s (giới hạn mới tăng theo số pod).
+  # Cần Prometheus + prometheus-adapter (rule ở cuối file). Chưa có thì metric này báo lỗi,
+  # HPA vẫn scale theo CPU nhưng sẽ không scale xuống.
+  - type: External
+    external:
+      metric:
+        name: gateway_load_ratio
+        selector:
+          matchLabels:
+            pool: exam
+      target:
+        type: Value
+        value: "700m"            # 0.7
   behavior:
     scaleUp:
-      stabilizationWindowSeconds: 0      # tăng ngay khi vượt ngưỡng
+      stabilizationWindowSeconds: 0
       policies:
       - type: Pods
         value: 2
-        periodSeconds: 10                # mỗi 30 giây tăng tối đa 2 pod
+        periodSeconds: 10
     scaleDown:
-      stabilizationWindowSeconds: 120    # tải giảm kéo dài 2 phút mới bớt pod
+      stabilizationWindowSeconds: 120
       policies:
       - type: Pods
         value: 1
         periodSeconds: 60
-
 ---
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
   name: frontend
+  namespace: ssl
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
@@ -83,48 +110,38 @@ spec:
         averageUtilization: 60   # % so với requests.cpu của pod
   behavior:
     scaleUp:
-      stabilizationWindowSeconds: 0      # tăng ngay khi vượt ngưỡng
+      stabilizationWindowSeconds: 0
       policies:
       - type: Pods
         value: 2
-        periodSeconds: 30                # mỗi 30 giây tăng tối đa 2 pod
+        periodSeconds: 30        # mỗi 30 giây tăng tối đa 2 pod
     scaleDown:
-      stabilizationWindowSeconds: 120    # tải giảm kéo dài 2 phút mới bớt pod
+      stabilizationWindowSeconds: 120
       policies:
       - type: Pods
         value: 1
         periodSeconds: 60
 
----
-apiVersion: autoscaling/v2
-kind: HorizontalPodAutoscaler
-metadata:
-  name: api-gateway
-  namespace: ssl
-spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: api-gateway
-  minReplicas: 3
-  maxReplicas: 10
-  metrics:
-  - type: Resource
-    resource:
-      name: cpu
-      target:
-        type: Utilization
-        averageUtilization: 25   # % so với requests.cpu của pod
-  behavior:
-    scaleUp:
-      stabilizationWindowSeconds: 0      # tăng ngay khi vượt ngưỡng
-      policies:
-      - type: Pods
-        value: 2
-        periodSeconds: 10                # mỗi 30 giây tăng tối đa 2 pod
-    scaleDown:
-      stabilizationWindowSeconds: 120    # tải giảm kéo dài 2 phút mới bớt pod
-      policies:
-      - type: Pods
-        value: 1
-        periodSeconds: 60
+# ------------------------------------------------------------
+# api-gateway: BỎ HPA, đặt số bản cố định trong Deployment (spec.replicas: 3, khớp GATEWAY_REPLICAS).
+# Lý do: gateway đổi số bản thì giới hạn đồng thời của từng gateway đổi theo
+# (per_pod * số_pod / số_gateway) -> dao động và dễ 503 không cần thiết.
+# Gateway hiếm khi là nút cổ chai; exam-service và DB mới là chỗ cần scale.
+# ------------------------------------------------------------
+
+# ------------------------------------------------------------
+# Tham khảo: rule prometheus-adapter để HPA đọc được gateway_load_ratio (đặt trong values của adapter)
+#
+# rules:
+#   external:
+#   - seriesQuery: 'gateway_load_ratio'
+#     resources:
+#       overrides:
+#         namespace: {resource: namespace}
+#     name:
+#       matches: "gateway_load_ratio"
+#       as: "gateway_load_ratio"
+#     metricsQuery: 'max(<<.Series>>{<<.LabelMatchers>>})'
+#
+# Prometheus cần scrape pod gateway ở đường dẫn /metrics (port 8088).
+# ------------------------------------------------------------
