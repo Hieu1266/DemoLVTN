@@ -7,6 +7,22 @@ import { getResult } from "@/src/actions/exam";
 import { errMsg } from "@/src/lib/api";
 import { fmtDate } from "@/src/lib/ui";
 
+function tryParseJson(val: any) {
+  if (typeof val !== "string") return val;
+  const trimmed = val.trim();
+  if (
+    (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
+    (trimmed.startsWith("[") && trimmed.endsWith("]"))
+  ) {
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      return val;
+    }
+  }
+  return val;
+}
+
 export default function ResultDetailPage() {
   const { attemptId } = useParams<{ attemptId: string }>();
   const [res, setRes] = useState<any | null>(null);
@@ -43,24 +59,74 @@ export default function ResultDetailPage() {
   const isPending = res.status === "NEEDS_GRADING";
   const percent = maxScore > 0 ? Math.round((score / maxScore) * 100) : 0;
 
-  // Hàm hiển thị đáp án sinh viên (tra ngược ID opt_1 thành chữ A, B, C...)
+  // Hàm hiển thị đáp án sinh viên trực quan cho mọi loại câu hỏi
   const renderUserAnswer = (a: any) => {
     const rawAns = a.user_answer ?? a.student_answer ?? a.answer;
     if (rawAns === null || rawAns === undefined || rawAns === "") {
       return <span className="italic text-slate-400">(Bỏ trống)</span>;
     }
 
+    const parsed = tryParseJson(rawAns);
     const qType = (a.type || a.question_type || "").toLowerCase();
-    const opts = a.options || [];
+    const qData = a.data || {};
+    const opts = a.options || qData.options || [];
+    const stmts = a.statements || qData.statements || [];
+    const blanks = a.blanks || qData.blanks || [];
 
+    // 1. Câu hỏi Đúng / Sai nhiều mệnh đề
+    if (qType === "true_false" && typeof parsed === "object" && !Array.isArray(parsed)) {
+      if (stmts.length > 0) {
+        return (
+          <div className="space-y-2 pt-1">
+            {stmts.map((s: any, idx: number) => {
+              const val = parsed[s.id];
+              return (
+                <div
+                  key={s.id || idx}
+                  className="flex items-center justify-between gap-3 rounded-xl bg-white px-3.5 py-2 border border-slate-200/80"
+                >
+                  <span className="text-slate-700 font-medium">
+                    <b className="text-indigo-600 mr-1.5">{String.fromCharCode(97 + idx)})</b>
+                    {s.text}
+                  </span>
+                  <span
+                    className={`rounded-md px-2.5 py-0.5 text-[10px] font-black uppercase shrink-0 ${
+                      val === true
+                        ? "bg-emerald-100 text-emerald-700"
+                        : val === false
+                        ? "bg-rose-100 text-rose-700"
+                        : "bg-slate-100 text-slate-400"
+                    }`}
+                  >
+                    {val === true ? "ĐÚNG" : val === false ? "SAI" : "(Chưa chọn)"}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        );
+      }
+
+      return (
+        <div className="space-y-1">
+          {Object.entries(parsed).map(([k, v], idx) => (
+            <div key={k}>
+              Mệnh đề #{idx + 1}: <b>{v === true ? "ĐÚNG" : v === false ? "SAI" : String(v)}</b>
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    // 2. Trắc nghiệm 1 đáp án
     if (qType === "single_choice" || qType.includes("single")) {
       if (Array.isArray(opts) && opts.length > 0) {
         const foundOpt = opts.find(
           (o: any, idx: number) =>
-            String(o?.id) === String(rawAns) ||
-            String(idx) === String(rawAns) ||
-            (typeof o === "string" && o === rawAns) ||
-            (o?.text && o.text === rawAns)
+            String(o?.id) === String(parsed) ||
+            String(idx) === String(parsed) ||
+            (typeof o === "string" && o === parsed) ||
+            (o?.text && o.text === parsed)
         );
 
         if (foundOpt) {
@@ -71,14 +137,45 @@ export default function ResultDetailPage() {
         }
       }
 
-      const idx = Number(rawAns);
+      const idx = Number(parsed);
       if (!isNaN(idx) && idx >= 0) {
         return `${String.fromCharCode(65 + idx)}`;
       }
     }
 
-    if (Array.isArray(rawAns)) return rawAns.join(", ");
-    return String(rawAns);
+    // 3. Trắc nghiệm nhiều đáp án
+    if ((qType === "multiple_select" || qType.includes("multiple")) && Array.isArray(parsed)) {
+      if (Array.isArray(opts) && opts.length > 0) {
+        return parsed
+          .map((ansId: any) => {
+            const idx = opts.findIndex(
+              (o: any, i: number) => String(o?.id) === String(ansId) || String(i) === String(ansId)
+            );
+            if (idx >= 0) {
+              const text = typeof opts[idx] === "string" ? opts[idx] : opts[idx].text;
+              return `${String.fromCharCode(65 + idx)}. ${text}`;
+            }
+            return String(ansId);
+          })
+          .join(", ");
+      }
+      return parsed.join(", ");
+    }
+
+    // 4. Điền khuyết nhiều ô trống
+    if (qType.includes("fill") && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return Object.entries(parsed)
+        .map(([bId, val], idx) => {
+          const bIdx = blanks.findIndex((b: any) => String(b.id) === String(bId));
+          const label = bIdx >= 0 ? `Ô #${bIdx + 1}` : `Ô #${idx + 1}`;
+          return `${label}: ${val || "(Bỏ trống)"}`;
+        })
+        .join(" | ");
+    }
+
+    if (Array.isArray(parsed)) return parsed.join(", ");
+    if (typeof parsed === "object") return JSON.stringify(parsed);
+    return String(parsed);
   };
 
   return (

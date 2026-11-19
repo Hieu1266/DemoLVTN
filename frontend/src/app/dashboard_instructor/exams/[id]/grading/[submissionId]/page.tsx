@@ -141,7 +141,7 @@ export default function StudentSubmissionGradingPage() {
               const qId = a.question_id || a.id || a.answer_id;
               const qType = String(a.question_type || a.type || "").toLowerCase();
               const qData = a.data || a.question?.data || {};
-              const qMode = String(qData.mode || "").toLowerCase();
+              const qMode = String(a.mode || qData.mode || "").toLowerCase();
               const studentAns =
                 a.student_answer ?? a.user_answer ?? a.answer ?? a.answer_data;
               const maxPts = a.max_points ?? a.points ?? 1;
@@ -154,17 +154,27 @@ export default function StudentSubmissionGradingPage() {
               const isTextBlank =
                 qType === "fill_blank_text" ||
                 (qType.includes("fill") && qMode === "text");
-              const needsManual = isEssay || isTextBlank || isCorrect === null;
+              const needsManual =
+                isEssay ||
+                isTextBlank ||
+                isCorrect === null ||
+                isCorrect === undefined;
 
               const typeBadgeLabel = isEssay
                 ? "Tự luận"
-                : isTextBlank
+                : isTextBlank || (qType.includes("fill") && needsManual)
                 ? "Điền khuyết (Nhập chữ)"
                 : qType.includes("fill")
                 ? "Điền khuyết (Trắc nghiệm)"
                 : qType === "true_false"
                 ? "Đúng / Sai"
+                : qType === "single_choice"
+                ? "Trắc nghiệm 1 đáp án"
+                : qType === "multiple_select"
+                ? "Trắc nghiệm nhiều đáp án"
                 : qType || "Câu hỏi";
+
+              const blanksList = a.blanks || qData.blanks || [];
 
               return (
                 <div
@@ -194,18 +204,15 @@ export default function StudentSubmissionGradingPage() {
                         Chờ chấm điểm
                       </span>
                     ) : (
-                      isCorrect !== undefined &&
-                      isCorrect !== null && (
-                        <span
-                          className={`rounded-lg px-2.5 py-1 text-[10px] font-black uppercase shrink-0 ${
-                            isCorrect
-                              ? "bg-emerald-100 text-emerald-700"
-                              : "bg-rose-100 text-rose-700"
-                          }`}
-                        >
-                          {isCorrect ? "Đúng" : "Sai"}
-                        </span>
-                      )
+                      <span
+                        className={`rounded-lg px-2.5 py-1 text-[10px] font-black uppercase shrink-0 ${
+                          isCorrect
+                            ? "bg-emerald-100 text-emerald-700"
+                            : "bg-rose-100 text-rose-700"
+                        }`}
+                      >
+                        {isCorrect ? "Đúng" : "Sai"}
+                      </span>
                     )}
                   </div>
 
@@ -214,13 +221,13 @@ export default function StudentSubmissionGradingPage() {
                     <p className="text-[10px] font-bold uppercase text-slate-400">
                       Bài làm của sinh viên:
                     </p>
-                    <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4 text-xs text-slate-800 whitespace-pre-wrap font-medium leading-relaxed">
-                      {formatStudentAnswer(studentAns, qType, qData)}
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4 text-xs text-slate-800 font-medium leading-relaxed">
+                      {renderFormattedAnswer(studentAns, qType, a)}
                     </div>
                   </div>
 
                   {/* GỢI Ý ĐÁP ÁN / ĐÁP ÁN MẪU */}
-                  {(a.sample_answer || a.explanation || qData.sample_answer || isTextBlank) && (
+                  {(a.sample_answer || a.explanation || qData.sample_answer || (isTextBlank && blanksList.length > 0)) && (
                     <div className="space-y-1.5">
                       <p className="text-[10px] font-bold uppercase text-indigo-600">
                         Gợi ý đáp án / Thang hướng dẫn chấm:
@@ -229,21 +236,19 @@ export default function StudentSubmissionGradingPage() {
                         {a.sample_answer ||
                           a.explanation ||
                           qData.sample_answer ||
-                          (Array.isArray(qData.blanks)
-                            ? qData.blanks
-                                .map(
-                                  (b: any, idx: number) =>
-                                    `Ô #${idx + 1}: ${(b.correctAnswers || []).join(" / ")}`
-                                )
-                                .join(" | ")
-                            : "Chấm thủ công theo nội dung bài làm")}
+                          blanksList
+                            .map(
+                              (b: any, idx: number) =>
+                                `Ô #${idx + 1}: ${(b.correctAnswers || []).join(" / ")}`
+                            )
+                            .join(" | ")}
                       </div>
                     </div>
                   )}
 
                   {/* CHẤM ĐIỂM */}
                   {needsManual ? (
-                    <div className="flex items-center justify-between gap-4 pt-3 border-t border-slate-100">
+                    <div className="flex flex-wrap items-center justify-between gap-4 pt-3 border-t border-slate-100">
                       <div className="flex items-center gap-2">
                         <span className="text-xs font-bold text-slate-700">
                           Chấm điểm câu này:
@@ -295,32 +300,138 @@ export default function StudentSubmissionGradingPage() {
   );
 }
 
-function formatStudentAnswer(ans: any, qType?: string, qData?: any): string {
-  if (ans === null || ans === undefined || ans === "") {
-    return "(Không trả lời)";
-  }
-
-  // Hiển thị đẹp cho câu Đúng/Sai nhiều mệnh đề
-  if (qType === "true_false" && typeof ans === "object" && !Array.isArray(ans)) {
-    const stmts = qData?.statements || [];
-    if (stmts.length > 0) {
-      return stmts
-        .map((s: any, idx: number) => {
-          const val = ans[s.id];
-          const label =
-            val === true ? "ĐÚNG" : val === false ? "SAI" : "(Chưa chọn)";
-          return `${String.fromCharCode(97 + idx)}) ${s.text} → ${label}`;
-        })
-        .join("\n");
-    }
-  }
-
-  if (typeof ans === "object") {
+function tryParseJson(val: any) {
+  if (typeof val !== "string") return val;
+  const trimmed = val.trim();
+  if (
+    (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
+    (trimmed.startsWith("[") && trimmed.endsWith("]"))
+  ) {
     try {
-      return JSON.stringify(ans, null, 2);
+      return JSON.parse(trimmed);
     } catch {
-      return String(ans);
+      return val;
     }
   }
-  return String(ans).trim();
+  return val;
+}
+
+function renderFormattedAnswer(rawAns: any, qType: string, item: any) {
+  if (rawAns === null || rawAns === undefined || rawAns === "") {
+    return <span className="italic text-slate-400">(Không trả lời)</span>;
+  }
+
+  const parsed = tryParseJson(rawAns);
+  const qData = item.data || item.question?.data || {};
+  const opts = item.options || qData.options || [];
+  const stmts = item.statements || qData.statements || [];
+  const blanks = item.blanks || qData.blanks || [];
+
+  // 1. Đúng / Sai nhiều mệnh đề
+  if (qType === "true_false" && typeof parsed === "object" && !Array.isArray(parsed)) {
+    if (stmts.length > 0) {
+      return (
+        <div className="space-y-2">
+          {stmts.map((s: any, idx: number) => {
+            const val = parsed[s.id];
+            const expected = Boolean(s.isCorrect);
+            const isRight = val !== undefined && Boolean(val) === expected;
+            return (
+              <div
+                key={s.id || idx}
+                className="flex items-center justify-between gap-3 rounded-xl bg-white px-3 py-2 border border-slate-200/80"
+              >
+                <span className="text-slate-800">
+                  <b className="text-indigo-600 mr-1.5">{String.fromCharCode(97 + idx)})</b>
+                  {s.text}
+                </span>
+                <div className="flex items-center gap-2 shrink-0">
+                  <span
+                    className={`rounded-md px-2 py-0.5 text-[10px] font-black uppercase ${
+                      val === true
+                        ? "bg-indigo-100 text-indigo-700"
+                        : val === false
+                        ? "bg-slate-200 text-slate-700"
+                        : "bg-slate-100 text-slate-400"
+                    }`}
+                  >
+                    SV chọn: {val === true ? "ĐÚNG" : val === false ? "SAI" : "Trống"}
+                  </span>
+                  <span
+                    className={`text-[11px] font-bold ${
+                      isRight ? "text-emerald-600" : "text-rose-600"
+                    }`}
+                  >
+                    {isRight ? "✓" : "✕"}
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      );
+    }
+
+    // Fallback nếu API chưa trả mảng statements
+    return (
+      <div className="space-y-1">
+        {Object.entries(parsed).map(([k, v], idx) => (
+          <div key={k}>
+            Mệnh đề #{idx + 1}: <b>{v === true ? "ĐÚNG" : v === false ? "SAI" : String(v)}</b>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  // 2. Trắc nghiệm 1 đáp án
+  if ((qType === "single_choice" || qType.includes("single")) && Array.isArray(opts) && opts.length > 0) {
+    const foundIdx = opts.findIndex(
+      (o: any, idx: number) =>
+        String(o?.id) === String(parsed) ||
+        String(idx) === String(parsed) ||
+        (typeof o === "string" && o === parsed) ||
+        (o?.text && o.text === parsed)
+    );
+    if (foundIdx >= 0) {
+      const foundOpt = opts[foundIdx];
+      const text = typeof foundOpt === "string" ? foundOpt : foundOpt.text || foundOpt.id;
+      return `${String.fromCharCode(65 + foundIdx)}. ${text}`;
+    }
+  }
+
+  // 3. Trắc nghiệm nhiều đáp án
+  if ((qType === "multiple_select" || qType.includes("multiple")) && Array.isArray(parsed)) {
+    if (Array.isArray(opts) && opts.length > 0) {
+      return parsed
+        .map((ansId: any) => {
+          const idx = opts.findIndex(
+            (o: any, i: number) => String(o?.id) === String(ansId) || String(i) === String(ansId)
+          );
+          if (idx >= 0) {
+            const text = typeof opts[idx] === "string" ? opts[idx] : opts[idx].text;
+            return `${String.fromCharCode(65 + idx)}. ${text}`;
+          }
+          return String(ansId);
+        })
+        .join(", ");
+    }
+    return parsed.join(", ");
+  }
+
+  // 4. Điền khuyết nhiều ô trống (dạng object { blank_1: "..." })
+  if (qType.includes("fill") && typeof parsed === "object" && !Array.isArray(parsed)) {
+    return Object.entries(parsed)
+      .map(([bId, val], idx) => {
+        const bIdx = blanks.findIndex((b: any) => String(b.id) === String(bId));
+        const label = bIdx >= 0 ? `Ô #${bIdx + 1}` : `Ô #${idx + 1}`;
+        return `${label}: ${val || "(Trống)"}`;
+      })
+      .join(" | ");
+  }
+
+  if (typeof parsed === "object") {
+    return JSON.stringify(parsed, null, 2);
+  }
+  return String(parsed).trim();
 }

@@ -1,6 +1,6 @@
 from typing import List, Dict, Any, Optional
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlmodel import Session, select, or_
 
 from app.api.v1.deps import get_db, get_current_user
@@ -10,30 +10,34 @@ router = APIRouter()
 
 
 # ===================================================================
-# 1. API LẤY TOÀN BỘ NGÂN HÀNG CÂU HỎI (LẬP LỊCH TRA CỨU MỞ RỘNG)
+# 1. API LẤY TOÀN BỘ NGÂN HÀNG CÂU HỎI (CÓ LỌC & TÌM KIẾM)
 # ===================================================================
 @router.get("/bank")
 @router.get("/bank/")
 def get_question_bank(
+    type: Optional[str] = Query(default=None),
+    search: Optional[str] = Query(default=None),
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
     """Chỉ lấy những câu hỏi gốc thuộc Ngân hàng câu hỏi (exam_id IS NULL)."""
-    statement = select(Question).where(Question.exam_id == None)
-    
-    # Nếu câu hỏi có phân biệt theo owner (giảng viên)
+    conditions = [Question.exam_id == None]
+
     user_id_str = current_user.get("user_id") or current_user.get("id")
     if hasattr(Question, "owner_id") and user_id_str:
         try:
             u_uuid = UUID(str(user_id_str))
-            # Lấy câu hỏi của chính giảng viên đó hoặc câu hỏi dùng chung
-            statement = select(Question).where(
-                Question.exam_id == None,
-                or_(Question.owner_id == u_uuid, Question.owner_id == None)
-            )
+            conditions.append(or_(Question.owner_id == u_uuid, Question.owner_id == None))
         except (ValueError, TypeError):
             pass
 
+    if type and type != "ALL":
+        conditions.append(Question.question_type == type)
+
+    if search and search.strip():
+        conditions.append(Question.content.ilike(f"%{search.strip()}%"))
+
+    statement = select(Question).where(*conditions)
     questions = db.exec(statement).all()
 
     formatted_questions = []
@@ -59,8 +63,9 @@ def get_question_bank(
 
     return formatted_questions
 
+
 # ===================================================================
-# 2. TẠO CÂU HỎI MỚI VÀO NGÂN HÀNG
+# 2. TẠO CÂU HỎI MỚI VÀO NGÂN HÀNG HOẶC ĐỀ THI
 # ===================================================================
 @router.post("")
 @router.post("/")
@@ -72,7 +77,6 @@ def create_bank_question(
     user_id_str = current_user.get("user_id") or current_user.get("id")
     owner_id = UUID(str(user_id_str)) if user_id_str else None
 
-    # 1. BẮT BUỘC LẤY EXAM_ID TỪ FRONTEND GỬI LÊN
     exam_id_str = payload.get("exam_id")
     exam_id = UUID(str(exam_id_str)) if exam_id_str else None
 
@@ -81,9 +85,8 @@ def create_bank_question(
     points = float(payload.get("points", 1.0))
     q_data = payload.get("data") or {}
 
-    # 2. TRUYỀN EXAM_ID VÀO DB
     new_q = Question(
-        exam_id=exam_id,  # FIX Ở ĐÂY: Để bằng exam_id thay vì None
+        exam_id=exam_id,
         question_type=q_type,
         content=content,
         points=points,
@@ -99,6 +102,46 @@ def create_bank_question(
     return new_q
 
 
+# ===================================================================
+# 3. CẬP NHẬT CÂU HỎI TRONG NGÂN HÀNG
+# ===================================================================
+@router.put("/{question_id}")
+@router.patch("/{question_id}")
+def update_question(
+    question_id: UUID,
+    payload: Dict[str, Any],
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """Cập nhật nội dung, loại câu hỏi, thang điểm và đáp án của câu hỏi."""
+    question = db.get(Question, question_id)
+    if not question:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Không tìm thấy câu hỏi."
+        )
+
+    if "question_type" in payload or "type" in payload:
+        question.question_type = payload.get("question_type") or payload.get("type")
+
+    if "content" in payload or "title" in payload:
+        question.content = payload.get("content") or payload.get("title")
+
+    if "points" in payload and payload["points"] is not None:
+        question.points = float(payload["points"])
+
+    if "data" in payload and payload["data"] is not None:
+        question.data = payload["data"]
+
+    db.add(question)
+    db.commit()
+    db.refresh(question)
+    return question
+
+
+# ===================================================================
+# 4. XÓA CÂU HỎI
+# ===================================================================
 @router.delete("/{question_id}")
 def delete_question(
     question_id: UUID,
@@ -107,19 +150,12 @@ def delete_question(
 ):
     """Xóa một câu hỏi theo ID."""
     question = db.get(Question, question_id)
-    
     if not question:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Không tìm thấy câu hỏi."
         )
 
-    # Nếu có logic kiểm tra quyền (ví dụ: chỉ người tạo mới được xóa), bạn thêm ở đây
-    # user_id_str = current_user.get("user_id") or current_user.get("id")
-    # if hasattr(question, "owner_id") and str(question.owner_id) != str(user_id_str):
-    #     raise HTTPException(status_code=403, detail="Không có quyền xóa câu hỏi này.")
-
     db.delete(question)
     db.commit()
-    
     return {"message": "Xóa câu hỏi thành công."}
