@@ -57,7 +57,14 @@ class CRUDAttempt:
             if "statements" in q_data:
                 q_data["statements"] = [{"id": stmt.get("id"), "text": stmt.get("text")} for stmt in q_data["statements"]]
             if "blanks" in q_data:
-                q_data["blanks"] = [{"id": b.get("id"), "type": b.get("type")} for b in q_data["blanks"]]
+                q_data["blanks"] = [
+                    {
+                        "id": b.get("id"),
+                        "type": b.get("type"),
+                        "options": b.get("options"),
+                    }
+                    for b in q_data["blanks"]
+                ]
             q_data.pop("sample_answer", None)
             q_data.pop("explanation", None)
 

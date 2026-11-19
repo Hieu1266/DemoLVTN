@@ -140,13 +140,31 @@ export default function StudentSubmissionGradingPage() {
             answersList.map((a: any, i: number) => {
               const qId = a.question_id || a.id || a.answer_id;
               const qType = String(a.question_type || a.type || "").toLowerCase();
+              const qData = a.data || a.question?.data || {};
+              const qMode = String(qData.mode || "").toLowerCase();
               const studentAns =
                 a.student_answer ?? a.user_answer ?? a.answer ?? a.answer_data;
               const maxPts = a.max_points ?? a.points ?? 1;
               const awardedPts =
                 a.earned_points ?? a.points_earned ?? a.score ?? 0;
-              const isEssay = qType === "essay";
               const isCorrect = a.is_correct ?? a.correct;
+
+              // Đồng bộ 100% với Backend: Tự luận HOẶC Điền khuyết nhập tay (hoặc is_correct === null) -> Giảng viên chấm
+              const isEssay = qType === "essay";
+              const isTextBlank =
+                qType === "fill_blank_text" ||
+                (qType.includes("fill") && qMode === "text");
+              const needsManual = isEssay || isTextBlank || isCorrect === null;
+
+              const typeBadgeLabel = isEssay
+                ? "Tự luận"
+                : isTextBlank
+                ? "Điền khuyết (Nhập chữ)"
+                : qType.includes("fill")
+                ? "Điền khuyết (Trắc nghiệm)"
+                : qType === "true_false"
+                ? "Đúng / Sai"
+                : qType || "Câu hỏi";
 
               return (
                 <div
@@ -160,7 +178,7 @@ export default function StudentSubmissionGradingPage() {
                           #{i + 1}
                         </span>
                         <span className="rounded-md bg-indigo-100 px-2.5 py-0.5 text-[10px] font-bold text-indigo-700 uppercase">
-                          {isEssay ? "Tự luận" : qType || "Câu hỏi"}
+                          {typeBadgeLabel}
                         </span>
                         <span className="text-xs font-semibold text-slate-400">
                           · Thang điểm: {maxPts} điểm
@@ -171,16 +189,23 @@ export default function StudentSubmissionGradingPage() {
                       </p>
                     </div>
 
-                    {!isEssay && isCorrect !== undefined && isCorrect !== null && (
-                      <span
-                        className={`rounded-lg px-2.5 py-1 text-[10px] font-black uppercase ${
-                          isCorrect
-                            ? "bg-emerald-100 text-emerald-700"
-                            : "bg-rose-100 text-rose-700"
-                        }`}
-                      >
-                        {isCorrect ? "Đúng" : "Sai"}
+                    {needsManual ? (
+                      <span className="rounded-lg bg-amber-100 px-2.5 py-1 text-[10px] font-black uppercase text-amber-700 shrink-0">
+                        Chờ chấm điểm
                       </span>
+                    ) : (
+                      isCorrect !== undefined &&
+                      isCorrect !== null && (
+                        <span
+                          className={`rounded-lg px-2.5 py-1 text-[10px] font-black uppercase shrink-0 ${
+                            isCorrect
+                              ? "bg-emerald-100 text-emerald-700"
+                              : "bg-rose-100 text-rose-700"
+                          }`}
+                        >
+                          {isCorrect ? "Đúng" : "Sai"}
+                        </span>
+                      )
                     )}
                   </div>
 
@@ -190,24 +215,34 @@ export default function StudentSubmissionGradingPage() {
                       Bài làm của sinh viên:
                     </p>
                     <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4 text-xs text-slate-800 whitespace-pre-wrap font-medium leading-relaxed">
-                      {formatStudentAnswer(studentAns)}
+                      {formatStudentAnswer(studentAns, qType, qData)}
                     </div>
                   </div>
 
-                  {/* GỢI Ý ĐÁP ÁN */}
-                  {(a.sample_answer || a.explanation) && (
+                  {/* GỢI Ý ĐÁP ÁN / ĐÁP ÁN MẪU */}
+                  {(a.sample_answer || a.explanation || qData.sample_answer || isTextBlank) && (
                     <div className="space-y-1.5">
                       <p className="text-[10px] font-bold uppercase text-indigo-600">
                         Gợi ý đáp án / Thang hướng dẫn chấm:
                       </p>
                       <div className="rounded-2xl border border-indigo-100 bg-indigo-50/50 p-4 text-xs text-indigo-950 font-medium leading-relaxed">
-                        {a.sample_answer || a.explanation}
+                        {a.sample_answer ||
+                          a.explanation ||
+                          qData.sample_answer ||
+                          (Array.isArray(qData.blanks)
+                            ? qData.blanks
+                                .map(
+                                  (b: any, idx: number) =>
+                                    `Ô #${idx + 1}: ${(b.correctAnswers || []).join(" / ")}`
+                                )
+                                .join(" | ")
+                            : "Chấm thủ công theo nội dung bài làm")}
                       </div>
                     </div>
                   )}
 
                   {/* CHẤM ĐIỂM */}
-                  {isEssay ? (
+                  {needsManual ? (
                     <div className="flex items-center justify-between gap-4 pt-3 border-t border-slate-100">
                       <div className="flex items-center gap-2">
                         <span className="text-xs font-bold text-slate-700">
@@ -243,7 +278,11 @@ export default function StudentSubmissionGradingPage() {
                     </div>
                   ) : (
                     <div className="text-right pt-2 text-xs font-bold text-slate-500">
-                      Điểm đạt được: <b className="text-indigo-600">{awardedPts} / {maxPts}</b> (Hệ thống chấm tự động)
+                      Điểm đạt được:{" "}
+                      <b className="text-indigo-600">
+                        {awardedPts} / {maxPts}
+                      </b>{" "}
+                      (Hệ thống chấm tự động)
                     </div>
                   )}
                 </div>
@@ -256,10 +295,26 @@ export default function StudentSubmissionGradingPage() {
   );
 }
 
-function formatStudentAnswer(ans: any): string {
+function formatStudentAnswer(ans: any, qType?: string, qData?: any): string {
   if (ans === null || ans === undefined || ans === "") {
     return "(Không trả lời)";
   }
+
+  // Hiển thị đẹp cho câu Đúng/Sai nhiều mệnh đề
+  if (qType === "true_false" && typeof ans === "object" && !Array.isArray(ans)) {
+    const stmts = qData?.statements || [];
+    if (stmts.length > 0) {
+      return stmts
+        .map((s: any, idx: number) => {
+          const val = ans[s.id];
+          const label =
+            val === true ? "ĐÚNG" : val === false ? "SAI" : "(Chưa chọn)";
+          return `${String.fromCharCode(97 + idx)}) ${s.text} → ${label}`;
+        })
+        .join("\n");
+    }
+  }
+
   if (typeof ans === "object") {
     try {
       return JSON.stringify(ans, null, 2);

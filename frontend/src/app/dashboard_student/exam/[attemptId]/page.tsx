@@ -170,6 +170,7 @@ export default function TakeExamPage() {
     const ans = answers[qId];
     if (ans === undefined || ans === null || ans === "") return false;
     if (Array.isArray(ans) && ans.length === 0) return false;
+    if (typeof ans === "object" && !Array.isArray(ans) && Object.keys(ans).length === 0) return false;
     return true;
   }).length;
 
@@ -450,28 +451,92 @@ export default function TakeExamPage() {
                 </div>
               )}
 
-              {/* D. ĐÚNG / SAI (true_false) */}
+              {/* D. ĐÚNG / SAI (true_false - ĐÁNH GIÁ TỪNG MỆNH ĐỀ) */}
               {qType === "true_false" && (
-                <div className="flex items-center gap-4 pt-1">
-                  {["TRUE", "FALSE"].map((tfVal) => (
-                    <label
-                      key={tfVal}
-                      className={`flex-1 flex items-center justify-center gap-2 rounded-2xl p-3.5 border cursor-pointer text-xs font-bold transition ${
-                        currentAns === tfVal
-                          ? "border-indigo-600 bg-indigo-50/60 text-indigo-950 shadow-2xs"
-                          : "border-slate-200 bg-slate-50/50 hover:bg-white text-slate-700"
-                      }`}
-                    >
-                      <input
-                        type="radio"
-                        name={qId}
-                        checked={currentAns === tfVal}
-                        onChange={() => updateAnswer(qId, tfVal)}
-                        className="h-4 w-4 accent-indigo-600"
-                      />
-                      {tfVal === "TRUE" ? "ĐÚNG" : "SAI"}
-                    </label>
-                  ))}
+                <div className="space-y-2.5 pt-1">
+                  {(() => {
+                    const stmts = q.data?.statements || [];
+                    if (stmts.length > 0) {
+                      const ansObj =
+                        typeof currentAns === "object" && currentAns !== null
+                          ? currentAns
+                          : {};
+
+                      return stmts.map((stmt: any, sIdx: number) => {
+                        const stmtId = stmt.id || `stmt_${sIdx}`;
+                        const currentVal = ansObj[stmtId];
+
+                        return (
+                          <div
+                            key={stmtId}
+                            className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50/50 p-3.5"
+                          >
+                            <span className="text-xs font-medium text-slate-800">
+                              <b className="text-indigo-600 mr-1.5">
+                                {String.fromCharCode(97 + sIdx)})
+                              </b>
+                              {stmt.text}
+                            </span>
+
+                            <div className="flex items-center gap-2 shrink-0">
+                              {[
+                                { label: "Đúng", val: true },
+                                { label: "Sai", val: false },
+                              ].map((opt) => {
+                                const isSelected = currentVal === opt.val;
+                                return (
+                                  <button
+                                    key={opt.label}
+                                    type="button"
+                                    onClick={() =>
+                                      updateAnswer(qId, {
+                                        ...ansObj,
+                                        [stmtId]: opt.val,
+                                      })
+                                    }
+                                    className={`rounded-xl px-4 py-1.5 text-xs font-bold border transition ${
+                                      isSelected
+                                        ? opt.val
+                                          ? "border-emerald-600 bg-emerald-600 text-white shadow-2xs"
+                                          : "border-rose-600 bg-rose-600 text-white shadow-2xs"
+                                        : "border-slate-200 bg-white text-slate-600 hover:bg-slate-100"
+                                    }`}
+                                  >
+                                    {opt.label}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      });
+                    }
+
+                    // Dự phòng cho câu Đúng/Sai 1 mệnh đề cũ
+                    return (
+                      <div className="flex items-center gap-4">
+                        {["TRUE", "FALSE"].map((tfVal) => (
+                          <label
+                            key={tfVal}
+                            className={`flex-1 flex items-center justify-center gap-2 rounded-2xl p-3.5 border cursor-pointer text-xs font-bold transition ${
+                              currentAns === tfVal
+                                ? "border-indigo-600 bg-indigo-50/60 text-indigo-950 shadow-2xs"
+                                : "border-slate-200 bg-slate-50/50 hover:bg-white text-slate-700"
+                            }`}
+                          >
+                            <input
+                              type="radio"
+                              name={qId}
+                              checked={currentAns === tfVal}
+                              onChange={() => updateAnswer(qId, tfVal)}
+                              className="h-4 w-4 accent-indigo-600"
+                            />
+                            {tfVal === "TRUE" ? "ĐÚNG" : "SAI"}
+                          </label>
+                        ))}
+                      </div>
+                    );
+                  })()}
                 </div>
               )}
 
