@@ -52,12 +52,19 @@ export default function StudentSubmissionGradingPage() {
     loadDetail();
   }, [loadDetail]);
 
-  async function saveGrade(questionId: string) {
+  async function saveGrade(questionId: string, maxPts: number) {
     if (!submissionId) return;
+    const rawScore = scores[questionId] ?? 0;
+
+    if (rawScore < 0 || rawScore > maxPts) {
+      alert(`Điểm chấm phải nằm trong khoảng từ 0 đến ${maxPts} điểm!`);
+      return;
+    }
+
     setSavingQId(questionId);
+    setError("");
     try {
-      const score = scores[questionId] ?? 0;
-      await gradeAnswer(submissionId, questionId, score);
+      await gradeAnswer(submissionId, questionId, rawScore);
       await loadDetail();
     } catch (e) {
       setError(errMsg(e));
@@ -144,12 +151,11 @@ export default function StudentSubmissionGradingPage() {
               const qMode = String(a.mode || qData.mode || "").toLowerCase();
               const studentAns =
                 a.student_answer ?? a.user_answer ?? a.answer ?? a.answer_data;
-              const maxPts = a.max_points ?? a.points ?? 1;
+              const maxPts = Number(a.max_points ?? a.points ?? 1);
               const awardedPts =
                 a.earned_points ?? a.points_earned ?? a.score ?? 0;
               const isCorrect = a.is_correct ?? a.correct;
 
-              // Đồng bộ 100% với Backend: Tự luận HOẶC Điền khuyết nhập tay (hoặc is_correct === null) -> Giảng viên chấm
               const isEssay = qType === "essay";
               const isTextBlank =
                 qType === "fill_blank_text" ||
@@ -259,12 +265,14 @@ export default function StudentSubmissionGradingPage() {
                           max={maxPts}
                           step={0.25}
                           value={scores[qId] ?? awardedPts}
-                          onChange={(e) =>
+                          onChange={(e) => {
+                            const val = parseFloat(e.target.value);
+                            const clamped = isNaN(val) ? 0 : Math.min(Math.max(0, val), maxPts);
                             setScores({
                               ...scores,
-                              [qId]: parseFloat(e.target.value) || 0,
-                            })
-                          }
+                              [qId]: clamped,
+                            });
+                          }}
                           className="w-24 rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs font-black text-indigo-600 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
                         />
                         <span className="text-xs font-semibold text-slate-500">
@@ -275,7 +283,7 @@ export default function StudentSubmissionGradingPage() {
                       <button
                         type="button"
                         disabled={savingQId === qId}
-                        onClick={() => saveGrade(qId)}
+                        onClick={() => saveGrade(qId, maxPts)}
                         className="rounded-xl bg-indigo-600 px-5 py-2 text-xs font-bold text-white hover:bg-indigo-700 disabled:opacity-50 transition shadow-xs"
                       >
                         {savingQId === qId ? "Đang lưu..." : "Lưu điểm câu này"}
@@ -372,7 +380,6 @@ function renderFormattedAnswer(rawAns: any, qType: string, item: any) {
       );
     }
 
-    // Fallback nếu API chưa trả mảng statements
     return (
       <div className="space-y-1">
         {Object.entries(parsed).map(([k, v], idx) => (

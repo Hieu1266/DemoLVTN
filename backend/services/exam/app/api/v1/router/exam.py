@@ -100,7 +100,6 @@ def _resolve_answer_text(ans_value: Any, options: List[Any]) -> Any:
     if not opt_map:
         return ans_value
 
-    # Nếu ans_value là chuỗi đại diện 1 ID
     if isinstance(ans_value, str):
         val_str = ans_value.strip()
         if val_str in opt_map:
@@ -110,7 +109,6 @@ def _resolve_answer_text(ans_value: Any, options: List[Any]) -> Any:
             if any(p in opt_map for p in parts):
                 return ", ".join([str(opt_map.get(p, p)) for p in parts])
 
-    # Nếu ans_value là danh sách các ID (chọn nhiều)
     if isinstance(ans_value, list):
         resolved_list = [opt_map.get(str(v).strip(), v) for v in ans_value]
         return ", ".join([str(x) for x in resolved_list])
@@ -380,7 +378,6 @@ def get_submission_detail_for_grading(
         q_data = q.data or {}
         q_options = q_data.get("options", [])
 
-        # Ánh xạ mã opt_... thành nội dung hiển thị thực tế
         resolved_ans_value = _resolve_answer_text(ans_value, q_options)
 
         detailed_items.append({
@@ -465,7 +462,7 @@ def get_submission_detail_for_grading(
 
 
 # ===================================================================
-# 4. GIẢNG VIÊN LƯU ĐIỂM CHẤM TAY (SAVE GRADES)
+# 4. GIẢNG VIÊN LƯU ĐIỂM CHẤM TAY (ĐÃ RÀNG BUỘC 0 <= SCORE <= MAX_PTS)
 # ===================================================================
 
 @router.post("/{exam_id}/submissions/{attempt_id}/grade")
@@ -496,15 +493,26 @@ def grade_submission(
 
     total_earned_raw = Decimal("0.00")
     total_possible_raw = Decimal("0.00")
+    still_needs_grading = False
 
     for q_id, q in q_map.items():
-        total_possible_raw += q.points
+        q_max = Decimal(str(q.points)) if q.points is not None else Decimal("1.00")
+        total_possible_raw += q_max
         ans = ans_map.get(q_id)
 
         if q_id in grades and ans:
             grade_item = grades[q_id]
-            earned = Decimal(str(grade_item.get("earned_points", grade_item.get("score", 0))))
-            is_corr = grade_item.get("is_correct", True if earned > 0 else False)
+            raw_val = grade_item.get("earned_points", grade_item.get("score", 0))
+            earned = Decimal(str(raw_val))
+
+            # Ràng buộc chặt chẽ: Không cho phép điểm âm hoặc vượt quá thang điểm của câu hỏi
+            if earned < Decimal("0.00") or earned > q_max:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Điểm chấm ({earned}) vượt quá giới hạn cho phép [0 - {q_max}] của câu hỏi!"
+                )
+
+            is_corr = grade_item.get("is_correct", True if earned > Decimal("0.00") else False)
 
             _set_model_field(ans, ["earned_points", "points_earned", "score"], earned)
             _set_model_field(ans, ["is_correct", "correct"], is_corr)
@@ -512,19 +520,28 @@ def grade_submission(
             total_earned_raw += earned
         elif ans:
             earned = Decimal(str(_get_attr(ans, ["earned_points", "points_earned", "score"], 0)))
+            # Đảm bảo dữ liệu cũ nếu từng bị lưu lố cũng được kẹp lại trong [0, q_max]
+            earned = max(Decimal("0.00"), min(earned, q_max))
             total_earned_raw += earned
+
+            if getattr(ans, "is_correct", None) is None:
+                still_needs_grading = True
 
     if total_possible_raw > Decimal("0.00"):
         scaled_score = (total_earned_raw / total_possible_raw) * Decimal("10.00")
-        scaled_score = round(scaled_score, 2)
+        scaled_score = max(Decimal("0.00"), min(round(scaled_score, 2), Decimal("10.00")))
     else:
         scaled_score = Decimal("0.00")
 
     _set_model_field(attempt, ["total_score", "score", "earned_score"], scaled_score)
-    attempt.status = "COMPLETED"
+    attempt.status = "NEEDS_GRADING" if still_needs_grading else "COMPLETED"
 
     db.add(attempt)
     db.commit()
     db.refresh(attempt)
 
-    return {"status": "success", "message": "Đã lưu điểm chấm bài thành công!", "final_score": float(scaled_score)}
+    return {
+        "status": "success",
+        "message": "Đã lưu điểm chấm bài thành công!",
+        "final_score": float(scaled_score),
+    }
