@@ -7,6 +7,7 @@ import { getExam, listQuestions, updateExam } from "@/src/actions/exam";
 import { createQuestion, deleteQuestion, getBankQuestions, QuestionPayload } from "@/src/actions/question";
 import { errMsg } from "@/src/lib/api";
 import { Exam, Question, QuestionType } from "@/src/types/exam";
+import BankQuestionModal from "@/src/components/BankQuestionSelectModal";
 
 // Danh mục loại câu hỏi cho Modal soạn trực tiếp
 const QUESTION_CATEGORIES = [
@@ -71,6 +72,22 @@ export default function ExamDetailPage() {
   ]);
   const [sampleAnswer, setSampleAnswer] = useState("");
 
+  // --- 3. MODAL CHỈNH SỬA THÔNG TIN ĐỀ THI ---
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [editExamName, setEditExamName] = useState("");
+  const [editAccessCode, setEditAccessCode] = useState("");
+  const [editDuration, setEditDuration] = useState<number>(60);
+  const [editMaxAttempts, setEditMaxAttempts] = useState<number>(1);
+  const [editStartAt, setEditStartAt] = useState("");
+  const [editEndAt, setEditEndAt] = useState("");
+  const [minDateTime, setMinDateTime] = useState("");
+
+  useEffect(() => {
+    const now = new Date();
+    now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+    setMinDateTime(now.toISOString().slice(0, 16));
+  }, []);
+
   // LOAD THÔNG TIN ĐỀ THI & CÂU HỎI
   const loadExamDetail = useCallback(async () => {
     if (!id) return;
@@ -93,8 +110,8 @@ export default function ExamDetailPage() {
     loadExamDetail();
   }, [loadExamDetail]);
 
-  // CẬP NHẬT CẤU HÌNH ĐỀ THI (Status, Allow Review)
-  async function patchExam(payload: Partial<Exam>) {
+  // CẬP NHẬT CẤU HÌNH ĐỀ THI
+  async function patchExam(payload: any) {
     if (!exam) return;
     try {
       const updated = await updateExam(id, payload);
@@ -102,6 +119,82 @@ export default function ExamDetailPage() {
     } catch (err) {
       alert(errMsg(err));
     }
+  }
+
+  // Chuyển đổi định dạng ISO từ Database sang giờ địa phương (Việt Nam) cho thẻ <input type="datetime-local">
+  const formatLocalDatetime = (isoStr?: string | null) => {
+    if (!isoStr) return "";
+    const d = new Date(isoStr);
+    if (isNaN(d.getTime())) return "";
+    const pad = (n: number) => n.toString().padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
+
+  // Mở Modal Sửa đề thi và điền dữ liệu cũ
+  function openEditModal() {
+    if (exam) {
+      setEditExamName(exam.exam_name || "");
+      setEditAccessCode(exam.access_code || "");
+      setEditDuration(exam.duration_minutes || 60);
+      setEditMaxAttempts((exam as any).max_attempts ?? 1);
+      setEditStartAt(formatLocalDatetime(exam.start_at));
+      setEditEndAt(formatLocalDatetime(exam.end_at));
+
+      // Cập nhật lại mốc thời gian tối thiểu hiện tại mỗi khi mở modal
+      const now = new Date();
+      now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+      setMinDateTime(now.toISOString().slice(0, 16));
+
+      setIsEditModalOpen(true);
+    }
+  }
+
+  // Xử lý Lưu thông tin sửa (Khóa mã PIN & Kiểm tra thời gian hợp lệ)
+  async function handleUpdateExamInfo(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editExamName.trim()) {
+      alert("Tên đề thi không được để trống!");
+      return;
+    }
+
+    const now = new Date();
+    if (editStartAt) {
+      const startDate = new Date(editStartAt);
+      const originalStart = exam?.start_at ? new Date(exam.start_at).getTime() : null;
+      // Chỉ chặn nếu người dùng thay đổi start_at sang một mốc thời gian mới nằm trong quá khứ
+      if (startDate.getTime() !== originalStart && startDate < new Date(now.getTime() - 5 * 60 * 1000)) {
+        alert("Thời gian mở đề không được nằm trong quá khứ!");
+        return;
+      }
+    }
+
+    if (editEndAt) {
+      const endDate = new Date(editEndAt);
+      if (editStartAt) {
+        const startDate = new Date(editStartAt);
+        if (endDate <= startDate) {
+          alert("Thời gian đóng đề phải lớn hơn thời gian mở đề!");
+          return;
+        }
+      } else if (endDate <= now) {
+        alert("Thời gian đóng đề phải ở tương lai!");
+        return;
+      }
+    }
+
+    setSubmitting(true);
+    const payload = {
+      exam_name: editExamName.trim(),
+      // Không gửi access_code lên server để cố định mã đã tạo ban đầu
+      duration_minutes: editDuration,
+      max_attempts: editMaxAttempts > 0 ? editMaxAttempts : null,
+      start_at: editStartAt ? new Date(editStartAt).toISOString() : null,
+      end_at: editEndAt ? new Date(editEndAt).toISOString() : null,
+    };
+
+    await patchExam(payload);
+    setIsEditModalOpen(false);
+    setSubmitting(false);
   }
 
   // SAO CHÉP MÃ PIN
@@ -131,14 +224,12 @@ export default function ExamDetailPage() {
     }
   }, [isBankModalOpen, fetchBankQuestions]);
 
-  function toggleSelectBankQuestion(qId: string) {
-    setSelectedBankIds((prev) =>
-      prev.includes(qId) ? prev.filter((item) => item !== qId) : [...prev, qId]
-    );
+  function handleOpenBankModal() {
+    setSelectedBankIds([]);
+    setIsBankModalOpen(true);
   }
 
-  // Thêm các câu hỏi đã chọn từ ngân hàng vào đề thi
-  async function handleAddFromBank() {
+  async function handleConfirmBankSelection() {
     if (selectedBankIds.length === 0) return;
     setSubmitting(true);
     try {
@@ -148,7 +239,7 @@ export default function ExamDetailPage() {
         );
         if (bq) {
           await createQuestion({
-            exam_id: id,
+            exam_id: id, // Chỉ đưa vào đề thi hiện tại, không tạo bản sao trong ngân hàng
             question_type: bq.type || bq.question_type || "single_choice",
             content: bq.title || bq.content || "",
             points: bq.points || 1,
@@ -224,8 +315,7 @@ export default function ExamDetailPage() {
 
     const backendType = formType.startsWith("fill_blank") ? "fill_blank" : formType;
 
-    const payload: QuestionPayload = {
-      exam_id: id,
+    const basePayload: QuestionPayload = {
       question_type: backendType,
       content: formContent.trim(),
       points: Number(formPoints),
@@ -234,7 +324,11 @@ export default function ExamDetailPage() {
 
     setSubmitting(true);
     try {
-      await createQuestion(payload);
+      // 1. Lưu 1 bản vào Ngân hàng câu hỏi (exam_id: null)
+      await createQuestion({ ...basePayload, exam_id: null });
+      // 2. Lưu 1 bản vào Đề thi hiện tại (exam_id: id)
+      await createQuestion({ ...basePayload, exam_id: id });
+
       setIsInlineModalOpen(false);
       resetInlineForm();
       await loadExamDetail();
@@ -245,7 +339,6 @@ export default function ExamDetailPage() {
     }
   }
 
-  // XÓA CÂU HỎI KHỎI ĐỀ THI
   async function handleRemoveQuestion(qid: string) {
     if (!confirm("Bạn có chắc chắn muốn xóa câu hỏi này khỏi đề thi?")) return;
     try {
@@ -255,9 +348,6 @@ export default function ExamDetailPage() {
       alert(errMsg(err));
     }
   }
-
-  // Tính tổng điểm
-  const totalPoints = questions.reduce((acc, q) => acc + (q.points || 1), 0);
 
   if (loading) {
     return (
@@ -284,8 +374,8 @@ export default function ExamDetailPage() {
   return (
     <div className="mx-auto max-w-5xl space-y-6 py-6 px-4">
       {/* HEADER PAGE */}
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div className="space-y-1">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="space-y-1 w-full sm:w-auto flex-1">
           <div className="flex items-center gap-2">
             <Link
               href="/dashboard_instructor"
@@ -310,13 +400,57 @@ export default function ExamDetailPage() {
                 : "Bản nháp"}
             </span>
           </div>
-          <h1 className="text-2xl font-black text-slate-900">{exam.exam_name}</h1>
-          <p className="text-xs font-medium text-slate-500">
-            Thời gian làm bài: <b>{exam.duration_minutes} phút</b>
-          </p>
+
+          <div className="flex items-center gap-3 mt-1">
+            <h1 className="text-2xl font-black text-slate-900">{exam.exam_name}</h1>
+            <button
+              onClick={openEditModal}
+              className="flex items-center gap-1 rounded-lg bg-slate-100 px-2 py-1 text-[11px] font-bold text-slate-600 hover:bg-indigo-100 hover:text-indigo-700 transition"
+              title="Chỉnh sửa thông tin đề thi"
+            >
+              ✏️ Sửa
+            </button>
+          </div>
+
+          {/* HIỂN THỊ ĐẦY ĐỦ THÔNG TIN ĐỀ THI ĐÃ TẠO */}
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-3 mt-4 p-3.5 bg-white shadow-2xs rounded-xl border border-slate-100">
+            <div className="space-y-1">
+              <p className="text-[10px] font-black text-slate-400 uppercase tracking-wide">Thời gian làm bài</p>
+              <p className="text-sm font-black text-slate-700">{exam.duration_minutes} phút</p>
+            </div>
+            
+            <div className="w-px h-8 bg-slate-200 hidden sm:block"></div>
+            
+            <div className="space-y-1">
+              <p className="text-[10px] font-black text-slate-400 uppercase tracking-wide">Số lần thi tối đa</p>
+              <p className="text-sm font-black text-slate-700">{(exam as any).max_attempts ? (exam as any).max_attempts + " lần / Sinh viên" : "Không giới hạn"}</p>
+            </div>
+
+            {(exam.start_at || exam.end_at) && (
+              <>
+                <div className="w-px h-8 bg-slate-200 hidden sm:block"></div>
+                
+                <div className="space-y-1">
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-wide">Mở đề từ</p>
+                  <p className="text-sm font-bold text-emerald-600">
+                    {exam.start_at ? new Date(exam.start_at).toLocaleString("vi-VN", { dateStyle: "short", timeStyle: "short" }) : "---"}
+                  </p>
+                </div>
+
+                <div className="w-px h-8 bg-slate-200 hidden sm:block"></div>
+
+                <div className="space-y-1">
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-wide">Đóng đề lúc</p>
+                  <p className="text-sm font-bold text-rose-600">
+                    {exam.end_at ? new Date(exam.end_at).toLocaleString("vi-VN", { dateStyle: "short", timeStyle: "short" }) : "---"}
+                  </p>
+                </div>
+              </>
+            )}
+          </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 shrink-0">
           <Link
             href={`/dashboard_instructor/exams/${id}/grading`}
             className="rounded-2xl border border-indigo-200 bg-indigo-50 px-4 py-2.5 text-xs font-bold text-indigo-700 hover:bg-indigo-100 transition shadow-2xs"
@@ -326,12 +460,12 @@ export default function ExamDetailPage() {
         </div>
       </div>
 
-      {/* BLOCK 1: THÔNG TIN VÀ CHUYỂN TRẠNG THÁI */}
+      {/* BLOCK 1: MÃ PIN VÀ CHUYỂN TRẠNG THÁI */}
       <div className="rounded-3xl border border-slate-200/80 bg-white p-6 shadow-2xs space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-100 pb-4">
           <div className="flex items-center gap-3">
             <span className="text-xs font-bold text-slate-500">Mã PIN tham gia phòng thi:</span>
-            <span className="font-mono text-lg font-black tracking-widest text-indigo-600 bg-indigo-50 px-3 py-1 rounded-xl border border-indigo-100">
+            <span className="font-mono text-lg font-black tracking-widest text-indigo-600 bg-indigo-50 px-3 py-1 rounded-xl border border-indigo-100 uppercase">
               {exam.access_code}
             </span>
             <button
@@ -391,15 +525,12 @@ export default function ExamDetailPage() {
             <h2 className="text-xs font-black uppercase tracking-wider text-indigo-900 flex items-center gap-2">
               Danh sách câu hỏi ({questions.length} câu)
             </h2>
-            {/* <p className="text-[11px] font-semibold text-slate-400 mt-0.5">
-              Tổng điểm đề thi: <b className="text-indigo-600">{totalPoints} điểm</b>
-            </p> */}
           </div>
 
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={() => setIsBankModalOpen(true)}
+              onClick={handleOpenBankModal}
               className="inline-flex items-center gap-1.5 rounded-xl border border-indigo-200 bg-indigo-50/70 px-3.5 py-2 text-xs font-bold text-indigo-700 hover:bg-indigo-100 transition"
             >
               📚 Chọn từ Ngân hàng
@@ -457,7 +588,6 @@ export default function ExamDetailPage() {
                     </button>
                   </div>
 
-                  {/* Hiển thị gợi ý lựa chọn đáp án */}
                   {(qType === "single_choice" || qType === "multiple_select" || qType === QuestionType.SINGLE_CHOICE || qType === QuestionType.MULTIPLE_CHOICE) && (
                     <ul className="mt-2 list-disc pl-6 text-xs space-y-1 text-slate-600">
                       {(q.options || q.data?.options)?.map((o: any, k: number) => (
@@ -477,113 +607,20 @@ export default function ExamDetailPage() {
         )}
       </div>
 
-      {/* ================================================================= */}
-      {/* MODAL 1: CHỌN CÂU HỎI TỪ NGÂN HÀNG */}
-      {/* ================================================================= */}
-      {isBankModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-xs animate-fadeIn">
-          <div className="w-full max-w-2xl max-h-[85vh] flex flex-col rounded-3xl border border-slate-100 bg-white shadow-2xl overflow-hidden">
-            <div className="p-5 border-b border-slate-100 flex items-center justify-between">
-              <div>
-                <h3 className="text-base font-black text-slate-900">
-                  Chọn câu hỏi từ Ngân hàng
-                </h3>
-                <p className="text-[11px] text-slate-400">
-                  Đã tích chọn {selectedBankIds.length} câu hỏi
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsBankModalOpen(false)}
-                className="text-slate-400 hover:text-slate-600 font-bold text-lg"
-              >
-                ✕
-              </button>
-            </div>
+      {/* MODAL 1: CHỌN CÂU HỎI TỪ NGÂN HÀNG (DÙNG COMPONENT CHUNG CÓ BỐC NGẪU NHIÊN) */}
+      <BankQuestionModal
+        isOpen={isBankModalOpen}
+        onClose={() => setIsBankModalOpen(false)}
+        bankQuestions={bankQuestions}
+        bankLoading={bankLoading}
+        bankSearch={bankSearch}
+        onSearchChange={setBankSearch}
+        tempSelectedBankIds={selectedBankIds}
+        setTempSelectedBankIds={setSelectedBankIds}
+        onConfirm={handleConfirmBankSelection}
+      />
 
-            <div className="p-4 bg-slate-50/50 border-b border-slate-100">
-              <input
-                type="text"
-                value={bankSearch}
-                onChange={(e) => setBankSearch(e.target.value)}
-                placeholder="Tìm kiếm nội dung câu hỏi trong ngân hàng..."
-                className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs outline-none focus:border-indigo-500"
-              />
-            </div>
-
-            <div className="flex-1 overflow-y-auto p-4 space-y-2.5">
-              {bankLoading ? (
-                <div className="py-8 text-center text-xs font-bold text-slate-400">
-                  Đang tải danh sách câu hỏi...
-                </div>
-              ) : bankQuestions.length === 0 ? (
-                <div className="py-8 text-center text-xs text-slate-400">
-                  Không tìm thấy câu hỏi phù hợp.
-                </div>
-              ) : (
-                bankQuestions.map((q: any) => {
-                  const qId = q.id || q.question_id;
-                  const isChecked = selectedBankIds.includes(qId);
-
-                  return (
-                    <label
-                      key={qId}
-                      onClick={() => toggleSelectBankQuestion(qId)}
-                      className={`flex items-start gap-3 rounded-2xl p-3 border cursor-pointer transition ${
-                        isChecked
-                          ? "border-indigo-600 bg-indigo-50/40"
-                          : "border-slate-200 bg-white hover:bg-slate-50"
-                      }`}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={isChecked}
-                        onChange={() => {}}
-                        className="mt-0.5 h-4 w-4 accent-indigo-600 shrink-0"
-                      />
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-2">
-                          <span className="rounded-md bg-indigo-100 px-2 py-0.5 text-[10px] font-bold text-indigo-700 uppercase">
-                            {q.type || q.question_type}
-                          </span>
-                          <span className="text-[10px] text-slate-400 font-bold">
-                            · {q.points || 1} điểm
-                          </span>
-                        </div>
-                        <p className="text-xs font-bold text-slate-800">
-                          {q.title || q.content}
-                        </p>
-                      </div>
-                    </label>
-                  );
-                })
-              )}
-            </div>
-
-            <div className="p-4 border-t border-slate-100 flex items-center justify-end gap-3 bg-white">
-              <button
-                type="button"
-                onClick={() => setIsBankModalOpen(false)}
-                className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50"
-              >
-                Hủy
-              </button>
-              <button
-                type="button"
-                disabled={submitting || selectedBankIds.length === 0}
-                onClick={handleAddFromBank}
-                className="rounded-xl bg-indigo-600 px-5 py-2 text-xs font-bold text-white hover:bg-indigo-700 disabled:opacity-50"
-              >
-                {submitting ? "Đang thêm..." : `Thêm vào đề thi (${selectedBankIds.length})`}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ================================================================= */}
       {/* MODAL 2: SOẠN CÂU HỎI MỚI TRỰC TIẾP */}
-      {/* ================================================================= */}
       {isInlineModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-xs animate-fadeIn">
           <div className="w-full max-w-3xl max-h-[92vh] overflow-y-auto rounded-3xl border border-indigo-100 bg-white p-6 sm:p-8 shadow-2xl space-y-6">
@@ -597,11 +634,10 @@ export default function ExamDetailPage() {
                     Soạn câu hỏi mới vào đề
                   </h2>
                   <p className="text-[11px] text-slate-400">
-                    Thêm trực tiếp câu hỏi mới vào đề thi hiện tại
+                    Câu hỏi sẽ tự động lưu vào Ngân hàng và thêm vào đề thi này
                   </p>
                 </div>
               </div>
-
               <button
                 type="button"
                 onClick={() => setIsInlineModalOpen(false)}
@@ -612,13 +648,11 @@ export default function ExamDetailPage() {
             </div>
 
             <form onSubmit={handleAddInlineQuestion} className="space-y-6">
-              {/* Chọn loại câu hỏi */}
               <div className="space-y-3">
                 <label className="text-xs font-bold uppercase tracking-wider text-indigo-900 flex items-center gap-1.5">
                   <span className="flex h-4 w-4 items-center justify-center rounded-full bg-indigo-600 text-[10px] text-white">1</span>
                   Chọn loại câu hỏi
                 </label>
-
                 <div className="grid gap-4 sm:grid-cols-3">
                   {QUESTION_CATEGORIES.map((cat) => (
                     <div key={cat.category} className="space-y-2 rounded-2xl border border-slate-200/80 bg-slate-50/50 p-3">
@@ -652,13 +686,11 @@ export default function ExamDetailPage() {
                 </div>
               </div>
 
-              {/* Nội dung & Thang điểm */}
               <div className="space-y-3">
                 <label className="text-xs font-bold uppercase tracking-wider text-indigo-900 flex items-center gap-1.5">
                   <span className="flex h-4 w-4 items-center justify-center rounded-full bg-indigo-600 text-[10px] text-white">2</span>
                   Nội dung câu hỏi
                 </label>
-
                 <div className="grid gap-3 sm:grid-cols-4">
                   <div className="sm:col-span-3">
                     <textarea
@@ -666,11 +698,10 @@ export default function ExamDetailPage() {
                       rows={3}
                       value={formContent}
                       onChange={(e) => setFormContent(e.target.value)}
-                      placeholder="Nhập nội dung câu hỏi (Dùng [___] để làm ô điền khuyết nếu có)..."
+                      placeholder="Nhập nội dung câu hỏi..."
                       className="w-full rounded-2xl border-2 border-slate-200 bg-slate-50/50 p-3.5 text-xs text-slate-800 outline-none focus:border-indigo-500 focus:bg-white transition shadow-inner"
                     />
                   </div>
-
                   <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 space-y-1 text-center flex flex-col justify-center">
                     <span className="text-[10px] font-bold text-slate-400 uppercase">Thang điểm</span>
                     <input
@@ -685,13 +716,11 @@ export default function ExamDetailPage() {
                 </div>
               </div>
 
-              {/* Cấu hình đáp án */}
               <div className="space-y-3 rounded-2xl border border-indigo-100 bg-indigo-50/30 p-4 sm:p-5">
                 <label className="text-xs font-bold uppercase tracking-wider text-indigo-900 flex items-center gap-1.5">
                   <span className="flex h-4 w-4 items-center justify-center rounded-full bg-indigo-600 text-[10px] text-white">3</span>
                   Thiết lập đáp án đúng
                 </label>
-
                 {(formType === "single_choice" || formType === "multiple_select") && (
                   <div className="space-y-2.5">
                     {options.map((opt, idx) => (
@@ -737,7 +766,6 @@ export default function ExamDetailPage() {
                     </button>
                   </div>
                 )}
-
                 {formType === "true_false" && (
                   <div className="space-y-2">
                     {statements.map((stmt, idx) => (
@@ -769,25 +797,10 @@ export default function ExamDetailPage() {
                     </button>
                   </div>
                 )}
-
                 {formType === "fill_blank_text" && (
                   <div className="space-y-3">
                     {textBlanks.map((b, idx) => (
                       <div key={b.id} className="rounded-xl bg-white p-3 border border-slate-200/80 space-y-1.5 shadow-2xs">
-                        <div className="flex items-center justify-between">
-                          <label className="text-[11px] font-bold text-slate-600 block">
-                            Ô khuyết #{idx + 1} (Các từ chấp nhận đúng, phân cách bởi dấu phẩy)
-                          </label>
-                          {textBlanks.length > 1 && (
-                            <button
-                              type="button"
-                              onClick={() => setTextBlanks(textBlanks.filter((item) => item.id !== b.id))}
-                              className="text-xs text-rose-500 font-bold hover:underline"
-                            >
-                              Xóa ô
-                            </button>
-                          )}
-                        </div>
                         <input
                           type="text"
                           required
@@ -807,25 +820,10 @@ export default function ExamDetailPage() {
                     </button>
                   </div>
                 )}
-
                 {formType === "fill_blank_select" && (
                   <div className="space-y-3">
                     {selectBlanks.map((b, idx) => (
                       <div key={b.id} className="rounded-xl bg-white p-3 border border-slate-200/80 space-y-2 shadow-2xs">
-                        <div className="flex items-center justify-between">
-                          <p className="text-[11px] font-bold text-indigo-900">
-                            Ô khuyết #{idx + 1} (Danh sách lựa chọn)
-                          </p>
-                          {selectBlanks.length > 1 && (
-                            <button
-                              type="button"
-                              onClick={() => setSelectBlanks(selectBlanks.filter((item) => item.id !== b.id))}
-                              className="text-xs text-rose-500 font-bold hover:underline"
-                            >
-                              Xóa ô
-                            </button>
-                          )}
-                        </div>
                         <input
                           type="text"
                           required
@@ -834,34 +832,20 @@ export default function ExamDetailPage() {
                           placeholder="VD: Hà Nội, Sài Gòn, Đà Nẵng"
                           className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs outline-none focus:border-indigo-500"
                         />
-                        <div className="flex items-center gap-2 pt-1">
-                          <span className="text-[11px] font-bold text-slate-600">Đáp án đúng chính xác:</span>
-                          <input
-                            type="text"
-                            required
-                            value={b.correctAnswer}
-                            onChange={(e) => setSelectBlanks(selectBlanks.map((item) => item.id === b.id ? { ...item, correctAnswer: e.target.value } : item))}
-                            placeholder="Nhập 1 giá trị khớp với danh sách trên"
-                            className="flex-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1 text-xs outline-none focus:border-indigo-500"
-                          />
-                        </div>
+                        <input
+                          type="text"
+                          required
+                          value={b.correctAnswer}
+                          onChange={(e) => setSelectBlanks(selectBlanks.map((item) => item.id === b.id ? { ...item, correctAnswer: e.target.value } : item))}
+                          placeholder="Nhập 1 giá trị khớp với danh sách trên"
+                          className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-1 text-xs outline-none focus:border-indigo-500 mt-1"
+                        />
                       </div>
                     ))}
-                    <button
-                      type="button"
-                      onClick={() => setSelectBlanks([...selectBlanks, { id: `blank_${Date.now()}`, optionsText: "Đáp án A, Đáp án B", correctAnswer: "Đáp án A" }])}
-                      className="text-xs font-bold text-indigo-600 hover:underline"
-                    >
-                      + Thêm ô khuyết trắc nghiệm
-                    </button>
                   </div>
                 )}
-
                 {formType === "essay" && (
                   <div className="space-y-1">
-                    <label className="text-[11px] font-bold text-slate-500 block">
-                      Đáp án gợi ý / Thang hướng dẫn chấm (Không bắt buộc)
-                    </label>
                     <textarea
                       rows={2}
                       value={sampleAnswer}
@@ -873,7 +857,6 @@ export default function ExamDetailPage() {
                 )}
               </div>
 
-              {/* Action Buttons Inline Form */}
               <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
                 <button
                   type="button"
@@ -888,6 +871,120 @@ export default function ExamDetailPage() {
                   className="rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-6 py-2.5 text-xs font-bold text-white shadow-md shadow-indigo-500/20 hover:shadow-indigo-500/35 active:scale-95 disabled:opacity-50 transition"
                 >
                   {submitting ? "Đang xử lý..." : "Đưa vào đề thi"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 3: CHỈNH SỬA THÔNG TIN ĐỀ THI (ĐÃ KHÓA MÃ PIN & CHẶN THỜI GIAN SAI) */}
+      {isEditModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-xs animate-fadeIn">
+          <div className="w-full max-w-2xl rounded-3xl border border-slate-100 bg-white shadow-2xl overflow-hidden">
+            <div className="flex items-center justify-between border-b border-slate-100 p-5">
+              <h3 className="text-base font-black text-slate-900">Chỉnh sửa thông tin đề thi</h3>
+              <button
+                type="button"
+                onClick={() => setIsEditModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600 font-bold text-lg"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleUpdateExamInfo} className="p-5 space-y-4">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-4">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-700">Tên đề thi <span className="text-rose-500">*</span></label>
+                    <input
+                      type="text"
+                      required
+                      value={editExamName}
+                      onChange={(e) => setEditExamName(e.target.value)}
+                      className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm outline-none focus:border-indigo-500 focus:bg-white transition"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-700">Thời gian làm bài (Phút) <span className="text-rose-500">*</span></label>
+                    <input
+                      type="number"
+                      min="1"
+                      required
+                      value={editDuration || ""}
+                      onChange={(e) => setEditDuration(parseInt(e.target.value) || 0)}
+                      className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm outline-none focus:border-indigo-500 focus:bg-white transition"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-700">Số lần thi tối đa / Sinh viên</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={editMaxAttempts === 0 ? "0" : editMaxAttempts || ""}
+                      onChange={(e) => setEditMaxAttempts(e.target.value ? parseInt(e.target.value) : 0)}
+                      placeholder="0 = Không giới hạn"
+                      className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm outline-none focus:border-indigo-500 focus:bg-white transition"
+                    />
+                    <p className="text-[10px] text-slate-500">Nhập 0 để cho phép thi lại không giới hạn.</p>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-bold text-slate-700">Mã PIN tham gia</label>
+                      <span className="text-[10px] font-semibold text-slate-400">🔒 Cố định</span>
+                    </div>
+                    <input
+                      type="text"
+                      readOnly
+                      value={editAccessCode}
+                      className="w-full cursor-not-allowed rounded-xl border border-slate-200 bg-slate-100 px-3.5 py-2.5 text-sm font-mono font-black tracking-widest text-indigo-600 outline-none uppercase select-all"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-700">Mở đề từ (Không bắt buộc)</label>
+                    <input
+                      type="datetime-local"
+                      min={minDateTime}
+                      value={editStartAt}
+                      onChange={(e) => setEditStartAt(e.target.value)}
+                      className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm outline-none focus:border-indigo-500 focus:bg-white transition"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-700">Đóng đề lúc (Không bắt buộc)</label>
+                    <input
+                      type="datetime-local"
+                      min={editStartAt || minDateTime}
+                      value={editEndAt}
+                      onChange={(e) => setEditEndAt(e.target.value)}
+                      className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm outline-none focus:border-indigo-500 focus:bg-white transition"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-100 mt-4">
+                <button
+                  type="button"
+                  onClick={() => setIsEditModalOpen(false)}
+                  className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50 transition"
+                >
+                  Hủy
+                </button>
+                <button
+                  type="submit"
+                  disabled={submitting}
+                  className="rounded-xl bg-indigo-600 px-5 py-2 text-xs font-bold text-white hover:bg-indigo-700 disabled:opacity-50 transition shadow-md shadow-indigo-600/20"
+                >
+                  {submitting ? "Đang lưu..." : "Lưu thay đổi"}
                 </button>
               </div>
             </form>

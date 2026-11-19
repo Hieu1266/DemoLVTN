@@ -69,17 +69,21 @@ def create_bank_question(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    """Tạo mới 1 câu hỏi vào Ngân hàng câu hỏi (exam_id = None)."""
     user_id_str = current_user.get("user_id") or current_user.get("id")
     owner_id = UUID(str(user_id_str)) if user_id_str else None
+
+    # 1. BẮT BUỘC LẤY EXAM_ID TỪ FRONTEND GỬI LÊN
+    exam_id_str = payload.get("exam_id")
+    exam_id = UUID(str(exam_id_str)) if exam_id_str else None
 
     q_type = payload.get("question_type") or payload.get("type", "single_choice")
     content = payload.get("content") or payload.get("title", "")
     points = float(payload.get("points", 1.0))
     q_data = payload.get("data") or {}
 
+    # 2. TRUYỀN EXAM_ID VÀO DB
     new_q = Question(
-        exam_id=None,  # Đảm bảo thuộc về ngân hàng chung
+        exam_id=exam_id,  # FIX Ở ĐÂY: Để bằng exam_id thay vì None
         question_type=q_type,
         content=content,
         points=points,
@@ -88,10 +92,34 @@ def create_bank_question(
 
     if hasattr(new_q, "owner_id") and owner_id:
         setattr(new_q, "owner_id", owner_id)
-    if hasattr(new_q, "is_bank"):
-        setattr(new_q, "is_bank", True)
 
     db.add(new_q)
     db.commit()
     db.refresh(new_q)
     return new_q
+
+
+@router.delete("/{question_id}")
+def delete_question(
+    question_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """Xóa một câu hỏi theo ID."""
+    question = db.get(Question, question_id)
+    
+    if not question:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Không tìm thấy câu hỏi."
+        )
+
+    # Nếu có logic kiểm tra quyền (ví dụ: chỉ người tạo mới được xóa), bạn thêm ở đây
+    # user_id_str = current_user.get("user_id") or current_user.get("id")
+    # if hasattr(question, "owner_id") and str(question.owner_id) != str(user_id_str):
+    #     raise HTTPException(status_code=403, detail="Không có quyền xóa câu hỏi này.")
+
+    db.delete(question)
+    db.commit()
+    
+    return {"message": "Xóa câu hỏi thành công."}

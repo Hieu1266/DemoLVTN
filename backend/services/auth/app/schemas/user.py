@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from typing import Optional
 from uuid import UUID
-
+from typing import List, Optional
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 
@@ -68,3 +68,19 @@ class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     user: UserRead
+
+class UserProfileUpdate(BaseModel):
+    firstname: Optional[str] = Field(default=None, max_length=100)
+    lastname: Optional[str] = Field(default=None, max_length=100)
+    bio: Optional[str] = None
+    avatar_url: Optional[str] = Field(default=None, max_length=500)
+    birthdate: Optional[date] = None
+
+
+
+class PaginatedUserResponse(BaseModel):
+    items: List[UserRead]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int

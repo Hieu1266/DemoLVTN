@@ -5,7 +5,7 @@ import Navbar from "@/src/components/Navbar";
 import Footer from "@/src/components/Footer";
 
 export const metadata: Metadata = {
-  title: "ELB - Thi trực tuyến",
+  title: "SSL - Smart System for Learning",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

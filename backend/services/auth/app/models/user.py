@@ -18,7 +18,7 @@ class User(SQLModel, table=True):
     email: EmailStr = Field(unique=True, nullable=False)
     password: Optional[str] = Field(nullable=True)  # lưu bcrypt hash
     birthdate: Optional[date] = Field(nullable=True, default=None)
-    created_at: datetime = Field(nullable=False, default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(nullable=False, index=True, default_factory=lambda: datetime.now(timezone.utc))
     status_id: str = Field(
         foreign_key="status_catalog.status_id",
         nullable=False,
