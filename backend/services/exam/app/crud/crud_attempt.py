@@ -1,3 +1,4 @@
+import json
 from typing import List, Optional, Tuple, Dict, Any, Union
 from uuid import UUID
 from datetime import datetime, timezone
@@ -97,7 +98,6 @@ class CRUDAttempt:
         # 1. Trích xuất dictionary câu trả lời từ payload nộp bài
         raw_answers = submit_data.answers if hasattr(submit_data, "answers") else submit_data
         if not isinstance(raw_answers, dict) and isinstance(raw_answers, list):
-            # Chuyển dạng list thành dict {question_id: answer}
             ans_dict = {}
             for item in raw_answers:
                 q_id = item.get("question_id") or item.get("id") if isinstance(item, dict) else getattr(item, "question_id", None)
@@ -158,11 +158,19 @@ class CRUDAttempt:
 
             total_earned_raw += earned
 
+            # Ép kiểu dict/list sang JSON string để lưu an toàn vào cột VARCHAR của PostgreSQL
+            if isinstance(student_ans, (dict, list)):
+                serialized_ans = json.dumps(student_ans, ensure_ascii=False)
+            elif student_ans is not None:
+                serialized_ans = str(student_ans)
+            else:
+                serialized_ans = None
+
             db_ans = AttemptAnswer(
                 attempt_id=attempt.attempt_id,
                 question_id=q.question_id
             )
-            _set_model_field(db_ans, ["student_answer", "answer_data", "user_answer"], student_ans)
+            _set_model_field(db_ans, ["student_answer", "answer_data", "user_answer"], serialized_ans)
             _set_model_field(db_ans, ["earned_points", "points_earned", "score"], earned)
             _set_model_field(db_ans, ["is_correct", "correct"], is_correct)
             db.add(db_ans)
